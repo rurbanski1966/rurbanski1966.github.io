@@ -2,12 +2,12 @@
 // Agent-facing views: dashboard, my sales.
 // Every view exports render(main, ctx) and wires its own listeners.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=40';
-import { CATEGORIES } from './config.js?v=40';
+import * as db from './db.js?v=41';
+import { CATEGORIES } from './config.js?v=41';
 import {
   esc, fmtMoneyExact, fmtNum, fmtDate,
   toast, statTile, statusChip, empty, spinner,
-} from './ui.js?v=40';
+} from './ui.js?v=41';
 
 const SERIES = {
   mapd:      'var(--series-1)',
@@ -34,6 +34,7 @@ export async function dashboard(main, ctx) {
       ${statTile({ label: 'Daily spend', value: fmtMoneyExact(m.daily_spend), note: "AI grading cost, today's calls" })}
       ${statTile({ label: 'SMC Daily spend', value: fmtMoneyExact(m.smc_daily_spend), note: "AI grading + review costs, today's SMC calls" })}
       ${statTile({ label: 'Weekly spend', value: fmtMoneyExact(m.weekly_spend), note: 'AI grading cost, Monday–Sunday' })}
+      ${statTile({ label: 'SMC Weekly spend', value: fmtMoneyExact(m.smc_weekly_spend), note: 'AI grading + review costs, SMC calls Monday–Sunday' })}
       ${statTile({ label: 'Monthly spend', value: fmtMoneyExact(m.monthly_spend), note: 'AI grading + review costs, this month' })}
       ${statTile({ label: 'Yearly spend', value: fmtMoneyExact(m.yearly_spend), note: 'AI grading + review costs, this year' })}
     </div>`;
