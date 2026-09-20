@@ -2,12 +2,12 @@
 // Agent-facing views: dashboard, my sales.
 // Every view exports render(main, ctx) and wires its own listeners.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=44';
-import { CATEGORIES } from './config.js?v=44';
+import * as db from './db.js?v=45';
+import { CATEGORIES } from './config.js?v=45';
 import {
   esc, fmtMoneyExact, fmtNum, fmtDate,
   toast, statTile, statusChip, empty, spinner, selectField,
-} from './ui.js?v=44';
+} from './ui.js?v=45';
 
 const SERIES = {
   mapd:      'var(--series-1)',
@@ -74,10 +74,20 @@ export async function dashboard(main, ctx) {
 
 // Per-agent breakdown of the same daily/weekly/monthly/yearly spend figures
 // as the KPI tiles above, filterable by agent or by the agent's own assigned
-// team. Admin-only — agent_spend_report() zeroes every figure for a
-// non-admin caller, but the dashboard doesn't even render this card unless
+// team. "Agent" here means the same thing the Agent column means on Call
+// reviews — a real account's full_name, or (for a call logged under someone
+// with no Lana login yet) the free-text label agent_spend_report() falls
+// back to. Two different labeled agents both carry agent_id = null, so
+// agent_id alone can't key the dropdown/filter — agentKey() below keys on
+// agent_id when present, the name otherwise. A single agent can also appear
+// as two rows if their calls resolve to two different teams (same grouping
+// scoring_leaderboard() uses), so each row's team is shown under the name.
+//
+// Admin-only — agent_spend_report() zeroes every figure for a non-admin
+// caller, but the dashboard doesn't even render this card unless
 // ctx.profile.role is 'admin'.
 const NO_TEAM = '__none__';
+const agentKey = r => r.agent_id || `name:${r.full_name}`;
 
 function drawAgentSpend(rows) {
   const card = document.getElementById('agent-spend');
@@ -89,7 +99,12 @@ function drawAgentSpend(rows) {
     return;
   }
 
-  const agentOptions = rows.map(r => ({ value: r.agent_id, label: r.full_name }));
+  const agentOptions = [];
+  const seenAgents = new Set();
+  for (const r of rows) {
+    const key = agentKey(r);
+    if (!seenAgents.has(key)) { seenAgents.add(key); agentOptions.push({ value: key, label: r.full_name }); }
+  }
   const teamNames = [...new Set(rows.map(r => r.team_name || NO_TEAM))];
   const teamOptions = teamNames.map(t => ({ value: t, label: t === NO_TEAM ? '— unassigned —' : t }));
 
@@ -112,10 +127,10 @@ function drawAgentSpend(rows) {
   const tbody = document.getElementById('agent-spend-rows');
 
   function redraw() {
-    const agentId = agentSel.value;
+    const agent = agentSel.value;
     const team = teamSel.value;
     const filtered = rows.filter(r =>
-      (agentId === 'all' || r.agent_id === agentId) &&
+      (agent === 'all' || agentKey(r) === agent) &&
       (team === 'all' || (r.team_name || NO_TEAM) === team)
     );
 
@@ -123,7 +138,7 @@ function drawAgentSpend(rows) {
       ? `<tr><td colspan="5">${empty('No agent matches these filters.')}</td></tr>`
       : filtered.map(r => `
         <tr>
-          <td>${esc(r.full_name)}</td>
+          <td>${esc(r.full_name)}${r.team_name ? `<br><span class="muted">${esc(r.team_name)}</span>` : ''}</td>
           <td class="num">${esc(fmtMoneyExact(r.daily_spend))}</td>
           <td class="num">${esc(fmtMoneyExact(r.weekly_spend))}</td>
           <td class="num">${esc(fmtMoneyExact(r.monthly_spend))}</td>
