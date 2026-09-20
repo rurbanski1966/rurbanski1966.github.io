@@ -5,12 +5,12 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=42';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES } from './config.js?v=42';
+import * as db from './db.js?v=43';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES } from './config.js?v=43';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
   toast, statTile, barRow, empty, spinner, selectField,
-} from './ui.js?v=42';
+} from './ui.js?v=43';
 
 /* --- helpers ------------------------------------------------------------- */
 

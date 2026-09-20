@@ -2,12 +2,12 @@
 // Agent-facing views: dashboard, my sales.
 // Every view exports render(main, ctx) and wires its own listeners.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=42';
-import { CATEGORIES } from './config.js?v=42';
+import * as db from './db.js?v=43';
+import { CATEGORIES } from './config.js?v=43';
 import {
   esc, fmtMoneyExact, fmtNum, fmtDate,
   toast, statTile, statusChip, empty, spinner,
-} from './ui.js?v=42';
+} from './ui.js?v=43';
 
 const SERIES = {
   mapd:      'var(--series-1)',
@@ -30,15 +30,20 @@ export async function dashboard(main, ctx) {
   const [m, mine] = await Promise.all([db.myMetrics(), db.mySubmissions({ limit: 8 })]);
 
   document.getElementById('kpis').outerHTML = `
-    <div class="kpis" id="kpis">
-      ${statTile({ label: 'Daily spend', value: fmtMoneyExact(m.daily_spend), note: "AI grading cost, today's calls" })}
-      ${statTile({ label: 'SMC Daily spend', value: fmtMoneyExact(m.smc_daily_spend), note: "AI grading + review costs, today's SMC calls" })}
-      ${statTile({ label: 'EWSS Daily spend', value: fmtMoneyExact(m.ewss_daily_spend), note: "AI grading + review costs, today's EWSS calls" })}
-      ${statTile({ label: 'Weekly spend', value: fmtMoneyExact(m.weekly_spend), note: 'AI grading cost, Monday–Sunday' })}
-      ${statTile({ label: 'SMC Weekly spend', value: fmtMoneyExact(m.smc_weekly_spend), note: 'AI grading + review costs, SMC calls Monday–Sunday' })}
-      ${statTile({ label: 'EWSS Weekly spend', value: fmtMoneyExact(m.ewss_weekly_spend), note: 'AI grading + review costs, EWSS calls Monday–Sunday' })}
-      ${statTile({ label: 'Monthly spend', value: fmtMoneyExact(m.monthly_spend), note: 'AI grading + review costs, this month' })}
-      ${statTile({ label: 'Yearly spend', value: fmtMoneyExact(m.yearly_spend), note: 'AI grading + review costs, this year' })}
+    <div id="kpis">
+      <div class="kpis">
+        ${statTile({ label: 'Daily spend', value: fmtMoneyExact(m.daily_spend), note: "AI grading cost, today's calls" })}
+        ${statTile({ label: 'Weekly spend', value: fmtMoneyExact(m.weekly_spend), note: 'AI grading cost, Monday–Sunday' })}
+        ${statTile({ label: 'Yearly spend', value: fmtMoneyExact(m.yearly_spend), note: 'AI grading + review costs, this year' })}
+      </div>
+      <div class="kpis">
+        ${statTile({ label: 'SMC Daily spend', value: fmtMoneyExact(m.smc_daily_spend), note: "AI grading + review costs, today's SMC calls" })}
+        ${statTile({ label: 'SMC Weekly spend', value: fmtMoneyExact(m.smc_weekly_spend), note: 'AI grading + review costs, SMC calls Monday–Sunday' })}
+        ${statTile({ label: 'SMC Monthly spend', value: fmtMoneyExact(m.smc_monthly_spend), note: 'AI grading + review costs, SMC calls this month' })}
+        ${statTile({ label: 'EWSS Daily spend', value: fmtMoneyExact(m.ewss_daily_spend), note: "AI grading + review costs, today's EWSS calls" })}
+        ${statTile({ label: 'EWSS Weekly spend', value: fmtMoneyExact(m.ewss_weekly_spend), note: 'AI grading + review costs, EWSS calls Monday–Sunday' })}
+        ${statTile({ label: 'EWSS Monthly spend', value: fmtMoneyExact(m.ewss_monthly_spend), note: 'AI grading + review costs, EWSS calls this month' })}
+      </div>
     </div>`;
 
   const recent = document.getElementById('recent');
