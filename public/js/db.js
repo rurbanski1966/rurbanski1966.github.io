@@ -11,7 +11,7 @@
 // an unauthenticated empty array reach the UI.
 // ---------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=39';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=40';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true },
@@ -224,7 +224,7 @@ export async function myMetrics() {
   const rows = unwrap(await supabase.rpc('my_metrics'));
   return (
     rows?.[0] ?? {
-      daily_ap: 0, daily_spend: 0, weekly_spend: 0, monthly_spend: 0, yearly_spend: 0,
+      daily_ap: 0, daily_spend: 0, smc_daily_spend: 0, weekly_spend: 0, monthly_spend: 0, yearly_spend: 0,
       month_ap: 0, pace: 0, target_ap: 0,
       days_elapsed: 0, days_in_month: 0, month_count: 0, pending_count: 0,
     }
