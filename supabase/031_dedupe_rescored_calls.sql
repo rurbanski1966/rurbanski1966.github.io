@@ -43,8 +43,19 @@
 
 -- ---------------------------------------------------------------------------
 -- call_scores_effective: now latest-row-per-recording, not every row.
+--
+-- Must be DROP + CREATE, not CREATE OR REPLACE: the view's column list was
+-- frozen at whatever call_scores looked like when 007 first ran s.*, and
+-- call_scores has grown columns since (script_id in migration 010,
+-- manual_summary_cost_usd/manual_summary_generated_at in 021) that a fresh
+-- s.* now expands to include in the middle of the list, not the end. CREATE
+-- OR REPLACE VIEW only allows appending columns at the very end, so it
+-- rejects that reshuffle — drop and recreate sidesteps the restriction
+-- entirely, since there's no ordering constraint left to violate.
 -- ---------------------------------------------------------------------------
-create or replace view public.call_scores_effective as
+drop view if exists public.call_scores_effective;
+
+create view public.call_scores_effective as
 select
   s.*,
   case when s.is_overridden then s.manual_overall_score     else s.overall_score     end as effective_overall_score,
