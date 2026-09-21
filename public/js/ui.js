@@ -2,7 +2,7 @@
 // Rendering helpers: formatting, date ranges, and the small set of chart
 // primitives the dashboard needs (stat tile, meter, bar row).
 // ---------------------------------------------------------------------------
-import { TIMEZONE, STATUSES, APPT_STATUSES } from './config.js?v=46';
+import { TIMEZONE, STATUSES, APPT_STATUSES } from './config.js?v=47';
 
 /* --- escaping ------------------------------------------------------------ */
 // Every value that reaches innerHTML goes through this. Client names and notes
@@ -206,6 +206,73 @@ export function trendDelta(current, previous, { higherIsBetter = true, digits = 
   const good = up === higherIsBetter;
   const arrow = up ? '▲' : '▼';
   return `<span class="trend trend--${good ? 'good' : 'bad'}">${arrow} ${rounded}${suffix} vs prior</span>`;
+}
+
+/* --- PDF export ------------------------------------------------------------
+   Loaded from cdnjs on first use rather than bundled, since only a couple of
+   views ever generate a PDF and most sessions never touch this path — cached
+   so a second export on any view reuses the same <script> tag instead of
+   injecting it again.
+   -------------------------------------------------------------------------- */
+let html2pdfReady = null;
+export function loadHtml2Pdf() {
+  if (window.html2pdf) return Promise.resolve();
+  if (html2pdfReady) return html2pdfReady;
+  html2pdfReady = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.2/html2pdf.bundle.min.js';
+    s.onload = () => resolve();
+    s.onerror = () => { html2pdfReady = null; reject(new Error('Could not load the PDF library — check your connection and try again.')); };
+    document.head.appendChild(s);
+  });
+  return html2pdfReady;
+}
+
+// Renders a self-contained HTML document string (its own <style>, its own
+// <body>) to a PDF, opened in a new tab and downloaded. The document's CSS
+// still targets `body` — scoped to .lana-pdf-root here instead, or it would
+// leak onto the real app body while the render container is attached.
+//
+// html2canvas only captures pixels the browser actually paints —
+// position:fixed with a large negative offset and an overflow:hidden
+// ancestor both render blank, so the container goes in normal flow, appended
+// last, and is gone again before this function returns. table-layout:fixed
+// plus overflow-wrap on the document's own cells is still the caller's job —
+// this only rasterizes what it's given, so a table that overflows the fixed
+// 860px width still gets clipped on the right by html2canvas either way.
+export async function exportHtmlToPdf(html, filename) {
+  await loadHtml2Pdf();
+
+  const parsed = new DOMParser().parseFromString(html, 'text/html');
+  const scopedCss = (parsed.querySelector('style')?.textContent || '')
+    .replace(/\bbody\b/g, '.lana-pdf-root');
+
+  const container = document.createElement('div');
+  container.className = 'lana-pdf-root';
+  container.style.cssText = 'width:860px; background:#fff;';
+  container.innerHTML = `<style>${scopedCss}</style>${parsed.body.innerHTML}`;
+  document.body.appendChild(container);
+
+  try {
+    const pdf = await window.html2pdf()
+      .set({
+        margin: 24,
+        filename,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: 'pt', format: 'letter', orientation: 'portrait' },
+        pagebreak: { mode: ['css', 'legacy'] },
+      })
+      .from(container)
+      .toPdf()
+      .get('pdf');
+
+    const win = window.open(pdf.output('bloburl'), '_blank');
+    if (!win) toast('PDF generated, but the pop-up was blocked — allow pop-ups to view it, or check your downloads.', 'error');
+    pdf.save(filename);
+  } finally {
+    container.remove();
+  }
 }
 
 // Status chips carry an icon and a word, so state never rides on color alone.

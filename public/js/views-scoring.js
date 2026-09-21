@@ -5,12 +5,12 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=46';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES } from './config.js?v=46';
+import * as db from './db.js?v=47';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES } from './config.js?v=47';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
-  toast, statTile, barRow, empty, spinner, selectField,
-} from './ui.js?v=46';
+  toast, statTile, barRow, empty, spinner, selectField, exportHtmlToPdf,
+} from './ui.js?v=47';
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -669,7 +669,6 @@ export async function reviewDetail(main, ctx, recordingId) {
       const originalText = btn.textContent;
       btn.disabled = true;
       btn.textContent = 'Generating PDF…';
-      let container;
       let summaryUpdated = false;
       try {
         if (score?.is_overridden) {
@@ -691,52 +690,12 @@ export async function reviewDetail(main, ctx, recordingId) {
         }
 
         btn.textContent = 'Generating PDF…';
-        await loadHtml2Pdf();
-
-        const html = coachingReportHtml(rec, score);
-        const parsed = new DOMParser().parseFromString(html, 'text/html');
-        // The style block still targets `body` — scope it to the render
-        // container below instead, or it would leak onto the real app body.
-        const scopedCss = (parsed.querySelector('style')?.textContent || '')
-          .replace(/\bbody\b/g, '.lana-pdf-root');
-
-        // html2canvas only captures pixels the browser actually paints —
-        // position:fixed with a large negative offset (attempt 1) and an
-        // overflow:hidden ancestor (attempt 2) both prevent that, so every
-        // render came back blank either way. Plain normal-flow, appended
-        // last, is the reliable option: nothing else on the page moves or
-        // scrolls to it, so it's never actually seen, and it's gone again
-        // by the time the click handler returns.
-        container = document.createElement('div');
-        container.className = 'lana-pdf-root';
-        container.style.cssText = 'width:860px; background:#fff;';
-        container.innerHTML = `<style>${scopedCss}</style>${parsed.body.innerHTML}`;
-        document.body.appendChild(container);
-
         const agentSlug = (rec.agent?.full_name || rec.agent_name || 'agent')
           .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-        const filename = `coaching-report-${agentSlug}-${rec.call_on}.pdf`;
-
-        const pdf = await window.html2pdf()
-          .set({
-            margin: 24,
-            filename,
-            image: { type: 'jpeg', quality: 0.98 },
-            html2canvas: { scale: 2, useCORS: true },
-            jsPDF: { unit: 'pt', format: 'letter', orientation: 'portrait' },
-            pagebreak: { mode: ['css', 'legacy'] },
-          })
-          .from(container)
-          .toPdf()
-          .get('pdf');
-
-        const win = window.open(pdf.output('bloburl'), '_blank');
-        if (!win) toast('PDF generated, but the pop-up was blocked — allow pop-ups to view it, or check your downloads.', 'error');
-        pdf.save(filename);
+        await exportHtmlToPdf(coachingReportHtml(rec, score), `coaching-report-${agentSlug}-${rec.call_on}.pdf`);
       } catch (err) {
         toast(err.message || 'Could not generate the PDF.', 'error');
       } finally {
-        container?.remove();
         btn.disabled = false;
         btn.textContent = originalText;
         // Refreshes Cost to score and the Summary of Call banner with the
@@ -1408,23 +1367,6 @@ function scoreFooterHtml(score) {
       Scores are model-generated and meant for coaching, not for discipline or
       compliance sign-off. Read the evidence quotes before acting on a finding.
     </p>`;
-}
-
-// Loaded on demand — only someone who actually clicks "Generate report"
-// pays for it — and cached so a second click on any call reuses the same
-// <script> tag instead of injecting it again.
-let html2pdfReady = null;
-function loadHtml2Pdf() {
-  if (window.html2pdf) return Promise.resolve();
-  if (html2pdfReady) return html2pdfReady;
-  html2pdfReady = new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.2/html2pdf.bundle.min.js';
-    s.onload = () => resolve();
-    s.onerror = () => { html2pdfReady = null; reject(new Error('Could not load the PDF library — check your connection and try again.')); };
-    document.head.appendChild(s);
-  });
-  return html2pdfReady;
 }
 
 /* --- coaching report -------------------------------------------------------
