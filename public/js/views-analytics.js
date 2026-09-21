@@ -5,12 +5,12 @@
 // enforced by app.js's route roles and by analytics_trend()/analytics_agents()
 // themselves (migration 030).
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=51';
-import { SCORE_DIMENSIONS } from './config.js?v=51';
+import * as db from './db.js?v=52';
+import { SCORE_DIMENSIONS } from './config.js?v=52';
 import {
   esc, fmtNum, toast, empty, spinner, selectField, statTile,
   lineChart, legend, trendDelta, exportHtmlToPdf,
-} from './ui.js?v=51';
+} from './ui.js?v=52';
 
 // Same label precedence as views-scoring.js's dimLabel, minus the per-score
 // stamped label — analytics_trend() only ever returns a bare average number
@@ -23,14 +23,25 @@ const dimLabel = key =>
 
 const PALETTE = ['var(--series-1)', 'var(--series-2)', 'var(--series-3)', 'var(--seq-300)', 'var(--seq-500)', 'var(--seq-600)'];
 
+// date_trunc('day'|'week'|'month'|'quarter', ...) are all valid Postgres
+// field names, so analytics_trend() needed no change to support the finer
+// buckets — only the frontend's toggle and labeling.
+const BUCKETS = ['day', 'week', 'month', 'quarter'];
+const BUCKET_LABEL = { day: 'Day', week: 'Week', month: 'Month', quarter: 'Quarter' };
+const BUCKET_TOGGLE_LABEL = { day: 'Daily', week: 'Weekly', month: 'Monthly', quarter: 'Quarterly' };
+
 // Mirrors views-agent.js's agentKey(): a labeled identity (no Lana login)
 // carries agent_id = null, so the name has to stand in as the dropdown key.
 const agentKey = a => a.agent_id || `name:${a.full_name}`;
 
 function bucketLabel(dateStr, bucket) {
-  const [y, m] = dateStr.split('-').map(Number);
+  const [y, m, d] = dateStr.split('-').map(Number);
   if (bucket === 'quarter') return `Q${Math.floor((m - 1) / 3) + 1} ${y}`;
-  return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+  if (bucket === 'month') return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+  // date_trunc('week', ...) lands on the Monday of that ISO week (matches
+  // my_metrics()'s week bounds elsewhere in the app).
+  const short = new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return bucket === 'week' ? `Wk of ${short}` : short;
 }
 
 export async function analytics(main) {
@@ -70,10 +81,10 @@ export async function analytics(main) {
         ${level === 'agent'
           ? selectField('an-agent', 'Agent', agents.map(a => ({ value: agentKey(a), label: a.full_name })), selectedAgentKey)
           : ''}
-        <div style="display:flex;gap:8px">
-          ${['month', 'quarter'].map(b => `
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          ${BUCKETS.map(b => `
             <button type="button" class="btn ${b === bucket ? 'btn--primary' : 'btn--ghost'}" data-bucket="${b}">
-              ${b === 'month' ? 'Monthly' : 'Quarterly'}
+              ${BUCKET_TOGGLE_LABEL[b]}
             </button>`).join('')}
         </div>
       </div>`;
@@ -185,7 +196,7 @@ export async function analytics(main) {
       <h2 style="margin-top:28px">Compliance findings by severity</h2>
       <div class="tablewrap"><table>
         <thead><tr>
-          <th>${bucket === 'month' ? 'Month' : 'Quarter'}</th>
+          <th>${BUCKET_LABEL[bucket]}</th>
           <th class="num">Critical</th><th class="num">High</th><th class="num">Medium</th><th class="num">Low</th>
         </tr></thead>
         <tbody>${rows.map(r => `
@@ -290,7 +301,8 @@ function summaryReportHtml({ scopeLabel, mode, bucket, rows }) {
   if (passDelta != null) {
     narrative.push(`Compliance pass rate moved from ${passFirst}% to ${passLast}% (${passDelta >= 0 ? '+' : ''}${passDelta}%).`);
   }
-  narrative.push(`${fmtNum(totalCalls)} call${totalCalls === 1 ? '' : 's'} scored across ${rows.length} ${bucket === 'month' ? 'month' : 'quarter'}${rows.length === 1 ? '' : 's'}.`);
+  const bucketWord = BUCKET_LABEL[bucket].toLowerCase();
+  narrative.push(`${fmtNum(totalCalls)} call${totalCalls === 1 ? '' : 's'} scored across ${rows.length} ${bucketWord}${rows.length === 1 ? '' : 's'}.`);
 
   return `<!doctype html>
 <html lang="en">
@@ -353,16 +365,16 @@ function summaryReportHtml({ scopeLabel, mode, bucket, rows }) {
     <div class="kpi">
       <div class="lbl">Calls scored</div>
       <div class="val">${fmtNum(totalCalls)}</div>
-      <div class="muted">${rows.length} ${bucket === 'month' ? 'months' : 'quarters'}</div>
+      <div class="muted">${rows.length} ${bucketWord}${rows.length === 1 ? '' : 's'}</div>
     </div>
   </div>
 
   <p>${esc(narrative.join(' '))}</p>
 
-  <h2>Score by ${bucket === 'month' ? 'month' : 'quarter'}</h2>
+  <h2>Score by ${bucketWord}</h2>
   <table>
     <thead><tr>
-      <th>${bucket === 'month' ? 'Month' : 'Quarter'}</th>
+      <th>${BUCKET_LABEL[bucket]}</th>
       <th>Overall</th>
       ${allDimKeys.map(k => `<th>${esc(dimLabel(k))}</th>`).join('')}
       <th>Compliance pass rate</th>
@@ -381,7 +393,7 @@ function summaryReportHtml({ scopeLabel, mode, bucket, rows }) {
   <h2>Compliance findings by severity</h2>
   <table>
     <thead><tr>
-      <th>${bucket === 'month' ? 'Month' : 'Quarter'}</th>
+      <th>${BUCKET_LABEL[bucket]}</th>
       <th>Critical</th><th>High</th><th>Medium</th><th>Low</th>
     </tr></thead>
     <tbody>
