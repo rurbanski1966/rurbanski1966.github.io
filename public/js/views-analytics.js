@@ -2,26 +2,50 @@
 // Analytics: score progression over time, at three rollup levels (agency,
 // team, agent) — separate from Leaderboard, which is ranking/comparative for
 // a single period rather than a drill-down history. Admin/reviewer-only,
-// enforced by app.js's route roles and by analytics_trend()/analytics_agents()
-// themselves (migration 030).
+// enforced by app.js's route roles and by analytics_trend()/analytics_agents()/
+// agent_score_roster() themselves (migrations 030, 032).
+//
+// Two audiences, one page: Manager view is the dense layout (filters, the
+// trend chart with all its toggles, severity bars, the agency/team roster,
+// exports). Agent view is what a manager actually shows an agent live in a
+// 1:1 — hero score, trend, category breakdown, one improvement callout, and
+// nothing else. Agent view only makes sense for a single selected agent, so
+// it's only offered on the "By agent" tab; Agency-wide and By team always
+// render the manager layout.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=52';
-import { SCORE_DIMENSIONS } from './config.js?v=52';
+import * as db from './db.js?v=53';
+import { SCORE_DIMENSIONS } from './config.js?v=53';
 import {
-  esc, fmtNum, toast, empty, spinner, selectField, statTile,
-  lineChart, legend, trendDelta, exportHtmlToPdf,
-} from './ui.js?v=52';
+  esc, fmtNum, toast, empty, spinner, selectField, statTile, barRow,
+  trendChart, legend, trendDelta, exportHtmlToPdf,
+} from './ui.js?v=53';
+
+// Fixed per Ryan — not inferred from the data and not to be changed to match
+// whatever the current average happens to be.
+const PASSING_SCORE = 70;
+
+const MODE_KEY = 'lana-analytics-mode';
 
 // Same label precedence as views-scoring.js's dimLabel, minus the per-score
 // stamped label — analytics_trend() only ever returns a bare average number
 // per dimension key, not the {label, rationale, ...} object a single score
-// carries.
+// carries. The rubric currently defines five dimensions (opening, discovery,
+// presentation, objection handling, closing) — whatever it defines is what
+// renders here; nothing is hardcoded to a specific count.
 const DIMENSION_ORDER = new Map(SCORE_DIMENSIONS.map((d, i) => [d.key, i]));
 const dimLabel = key =>
   SCORE_DIMENSIONS.find(d => d.key === key)?.label
   || key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
 const PALETTE = ['var(--series-1)', 'var(--series-2)', 'var(--series-3)', 'var(--seq-300)', 'var(--seq-500)', 'var(--seq-600)'];
+
+// A dedicated four-way mapping, distinct from FINDING_SEVERITIES' chip tones
+// (which lump low and medium under one amber "warning" tone) — the point of
+// these bars is exactly to make a critical spike read as louder than a low
+// one, so each severity gets its own color per Ryan's spec.
+const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'];
+const SEVERITY_LABEL = { critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low' };
+const SEVERITY_COLOR = { critical: 'var(--critical)', high: 'var(--serious)', medium: 'var(--warning)', low: 'var(--good)' };
 
 // date_trunc('day'|'week'|'month'|'quarter', ...) are all valid Postgres
 // field names, so analytics_trend() needed no change to support the finer
@@ -44,6 +68,75 @@ function bucketLabel(dateStr, bucket) {
   return bucket === 'week' ? `Wk of ${short}` : short;
 }
 
+// Sorted, ordered dimension entries for a single bucket's dimension_avgs.
+function orderedDims(dimensionAvgs) {
+  return Object.entries(dimensionAvgs || {})
+    .sort(([a], [b]) => (DIMENSION_ORDER.get(a) ?? Infinity) - (DIMENSION_ORDER.get(b) ?? Infinity));
+}
+
+// Shared by both views — horizontal bars, one per skill category, scaled
+// against a fixed 0-100 (not the max of the set): a category's bar length is
+// how close it is to full marks, not how it compares to its neighbors, which
+// would visually exaggerate small gaps when every category is already
+// strong. The single lowest-scoring category is colored distinctly; ties
+// keep the first one encountered.
+function skillBars(dimensionAvgs) {
+  const entries = orderedDims(dimensionAvgs);
+  if (entries.length === 0) return empty('No category scores for this period yet.');
+  const lowestKey = entries.reduce((min, [k, v]) => (Number(v) < Number(dimensionAvgs[min]) ? k : min), entries[0][0]);
+  return `<div class="bars">${entries.map(([key, val]) => barRow({
+    label: dimLabel(key),
+    value: val,
+    display: val,
+    max: 100,
+    color: key === lowestKey ? 'var(--critical)' : 'var(--series-1)',
+  })).join('')}</div>`;
+}
+
+// Shared by both manager-view levels — bars sized relative to each other
+// (the largest of the four counts, not a fixed scale, since raw finding
+// counts have no natural ceiling the way a 0-100 score does).
+function severityBars(findingsBySeverity) {
+  const counts = SEVERITY_ORDER.map(k => Number(findingsBySeverity?.[k] || 0));
+  const max = Math.max(1, ...counts);
+  return `<div class="bars">${SEVERITY_ORDER.map((k, i) => barRow({
+    label: SEVERITY_LABEL[k],
+    value: counts[i],
+    display: fmtNum(counts[i]),
+    max,
+    color: SEVERITY_COLOR[k],
+  })).join('')}</div>`;
+}
+
+function lowestDimension(dimensionAvgs) {
+  const entries = orderedDims(dimensionAvgs);
+  if (entries.length === 0) return null;
+  return entries.reduce((min, e) => (Number(e[1]) < Number(min[1]) ? e : min));
+}
+
+// A recording scored twice also had its cost double-counted (migration
+// 031) — same principle applies here: a comparison always uses the pair of
+// buckets that actually have data, never assumes a fixed lookback.
+function severeCount(row) {
+  return Number(row?.findings_by_severity?.critical || 0) + Number(row?.findings_by_severity?.high || 0);
+}
+
+function compareRoster(a, b, sort) {
+  if (sort === 'name') return a.full_name.localeCompare(b.full_name);
+  if (sort === 'score') return Number(b.latest_overall) - Number(a.latest_overall);
+  // 'decline': most negative score_delta first; agents with no prior period
+  // to compare against (new to the roster) sort last, not first — there's
+  // nothing to flag yet, and burying a real decline under them would defeat
+  // the point of this default.
+  const ad = a.score_delta, bd = b.score_delta;
+  if (ad == null && bd == null) return a.full_name.localeCompare(b.full_name);
+  if (ad == null) return 1;
+  if (bd == null) return -1;
+  return Number(ad) - Number(bd);
+}
+
+const rosterFlagged = r => (r.score_delta != null && Number(r.score_delta) < 0) || r.findings_worsened;
+
 export async function analytics(main) {
   main.innerHTML = `
     <div class="page__head"><div>
@@ -65,6 +158,9 @@ export async function analytics(main) {
   const activeDims = new Set();
   let showCompliance = false;
   let lastRows = [];
+  let lastRoster = [];
+  let rosterSort = 'decline';
+  let mode = sessionStorage.getItem(MODE_KEY) === 'agent' ? 'agent' : 'manager';
 
   function renderFilters() {
     filtersHost.innerHTML = `
@@ -81,18 +177,30 @@ export async function analytics(main) {
         ${level === 'agent'
           ? selectField('an-agent', 'Agent', agents.map(a => ({ value: agentKey(a), label: a.full_name })), selectedAgentKey)
           : ''}
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <div style="display:flex;gap:8px">
           ${BUCKETS.map(b => `
             <button type="button" class="btn ${b === bucket ? 'btn--primary' : 'btn--ghost'}" data-bucket="${b}">
               ${BUCKET_TOGGLE_LABEL[b]}
             </button>`).join('')}
         </div>
+        ${level === 'agent' ? `
+          <div style="display:flex;gap:8px">
+            <button type="button" class="btn ${mode === 'manager' ? 'btn--primary' : 'btn--ghost'}" data-mode="manager">Manager view</button>
+            <button type="button" class="btn ${mode === 'agent' ? 'btn--primary' : 'btn--ghost'}" data-mode="agent">Agent view</button>
+          </div>` : ''}
       </div>`;
 
     filtersHost.querySelectorAll('[data-level]').forEach(btn =>
       btn.addEventListener('click', () => { level = btn.dataset.level; renderFilters(); draw(); }));
     filtersHost.querySelectorAll('[data-bucket]').forEach(btn =>
       btn.addEventListener('click', () => { bucket = btn.dataset.bucket; renderFilters(); draw(); }));
+    filtersHost.querySelectorAll('[data-mode]').forEach(btn =>
+      btn.addEventListener('click', () => {
+        mode = btn.dataset.mode;
+        sessionStorage.setItem(MODE_KEY, mode);
+        renderFilters();
+        renderBody();
+      }));
 
     const teamSel = document.getElementById('an-team');
     if (teamSel) teamSel.addEventListener('change', e => { selectedTeamId = e.target.value; draw(); });
@@ -113,18 +221,65 @@ export async function analytics(main) {
       else if (match) params.agentName = match.agent_name;
     }
 
-    lastRows = await db.analyticsTrend(params);
-    renderChart();
+    const fetches = [db.analyticsTrend(params)];
+    // The roster is a "who else needs attention" view — meaningless scoped
+    // to the one agent already selected, so it's only fetched for the two
+    // levels where it's shown.
+    if (level !== 'agent') fetches.push(db.agentScoreRoster({ bucket, teamId: level === 'team' ? selectedTeamId : null }));
+
+    const [rows, roster] = await Promise.all(fetches);
+    lastRows = rows;
+    lastRoster = roster || [];
+    renderBody();
   }
 
-  function renderChart() {
-    const rows = lastRows;
-    if (rows.length === 0) {
+  function renderBody() {
+    if (lastRows.length === 0) {
       body.innerHTML = empty('No scored calls for this selection yet.');
       return;
     }
+    if (level === 'agent' && mode === 'agent') renderAgentView();
+    else renderManagerView();
+  }
 
+  function renderAgentView() {
+    const rows = lastRows;
+    const last = rows[rows.length - 1];
     const labels = rows.map(r => bucketLabel(r.bucket_start, bucket));
+    const chartMode = rows.length < 6 ? 'bar' : 'line';
+    const passing = last.avg_overall_score != null && Number(last.avg_overall_score) >= PASSING_SCORE;
+    const lowest = lowestDimension(last.dimension_avgs);
+
+    body.innerHTML = `
+      <div class="card" style="text-align:center;padding:36px 20px">
+        <div class="kpi__label">Overall score</div>
+        <div style="font-size:56px;font-weight:800;line-height:1;margin:6px 0">${esc(last.avg_overall_score ?? '—')}</div>
+        <div>${passing
+          ? '<span class="chip chip--good">✓ Passing (70+)</span>'
+          : `<span class="chip chip--critical">✕ Below passing (${PASSING_SCORE})</span>`}</div>
+      </div>
+
+      <div class="card__head" style="margin-top:20px"><h2>Score trend</h2></div>
+      ${trendChart({
+        series: [{ key: 'overall', label: 'Overall score', color: 'var(--brand)', values: rows.map(r => (r.avg_overall_score == null ? null : Number(r.avg_overall_score))) }],
+        labels,
+        mode: chartMode,
+        threshold: { value: PASSING_SCORE, label: `Passing (${PASSING_SCORE})` },
+      })}
+
+      <h2 style="margin-top:24px">By category</h2>
+      ${skillBars(last.dimension_avgs)}
+
+      ${lowest ? `
+        <p class="muted" style="margin-top:16px;font-size:14px">
+          Top area to improve: <strong>${esc(dimLabel(lowest[0]))}</strong> (${esc(lowest[1])})
+        </p>` : ''}`;
+  }
+
+  function renderManagerView() {
+    const rows = lastRows;
+    const labels = rows.map(r => bucketLabel(r.bucket_start, bucket));
+    const chartMode = rows.length < 6 ? 'bar' : 'line';
     const allDimKeys = [...new Set(rows.flatMap(r => Object.keys(r.dimension_avgs || {})))]
       .sort((a, b) => (DIMENSION_ORDER.get(a) ?? Infinity) - (DIMENSION_ORDER.get(b) ?? Infinity));
 
@@ -159,6 +314,14 @@ export async function analytics(main) {
     const prevPassPct = prev?.compliance_pass_rate != null ? Math.round(Number(prev.compliance_pass_rate) * 100) : null;
     const totalCalls = rows.reduce((sum, r) => sum + Number(r.calls_scored), 0);
 
+    // The bug this fixes: a rising overall-score delta and a worsening
+    // compliance picture can both be true in the same period, and one green
+    // arrow must never stand in for both facts. Shown side by side, each
+    // colored only by its own direction, so neither can misrepresent the
+    // other.
+    const lastSevere = severeCount(last);
+    const prevSevere = prev ? severeCount(prev) : null;
+
     body.innerHTML = `
       <div class="kpis" style="margin-bottom:20px">
         ${statTile({
@@ -170,6 +333,11 @@ export async function analytics(main) {
           label: 'Compliance pass rate',
           value: lastPassPct != null ? `${lastPassPct}%` : '—',
           note: trendDelta(lastPassPct, prevPassPct, { suffix: '%' }),
+        })}
+        ${statTile({
+          label: 'Compliance findings (critical+high)',
+          value: fmtNum(lastSevere),
+          note: trendDelta(lastSevere, prevSevere, { higherIsBetter: false, digits: 0 }),
         })}
         ${statTile({
           label: 'Calls scored',
@@ -191,26 +359,36 @@ export async function analytics(main) {
         </label>
       </div>
       ${legend(series.map(s => ({ color: s.color, label: s.label })))}
-      ${lineChart({ series, labels })}
+      ${trendChart({ series, labels, mode: chartMode, threshold: { value: PASSING_SCORE, label: `Passing (${PASSING_SCORE})` } })}
+
+      <h2 style="margin-top:28px">By category</h2>
+      ${skillBars(last.dimension_avgs)}
 
       <h2 style="margin-top:28px">Compliance findings by severity</h2>
-      <div class="tablewrap"><table>
-        <thead><tr>
-          <th>${BUCKET_LABEL[bucket]}</th>
-          <th class="num">Critical</th><th class="num">High</th><th class="num">Medium</th><th class="num">Low</th>
-        </tr></thead>
-        <tbody>${rows.map(r => `
-          <tr>
-            <td>${esc(bucketLabel(r.bucket_start, bucket))}</td>
-            <td class="num">${fmtNum(r.findings_by_severity?.critical || 0)}</td>
-            <td class="num">${fmtNum(r.findings_by_severity?.high || 0)}</td>
-            <td class="num">${fmtNum(r.findings_by_severity?.medium || 0)}</td>
-            <td class="num">${fmtNum(r.findings_by_severity?.low || 0)}</td>
-          </tr>`).join('')}
-        </tbody>
-      </table></div>
+      ${severityBars(last.findings_by_severity)}
+      <details style="margin-top:10px">
+        <summary class="muted" style="cursor:pointer;font-size:12px">Exact numbers by ${BUCKET_LABEL[bucket].toLowerCase()}</summary>
+        <div class="tablewrap" style="margin-top:10px"><table>
+          <thead><tr>
+            <th>${BUCKET_LABEL[bucket]}</th>
+            <th class="num">Critical</th><th class="num">High</th><th class="num">Medium</th><th class="num">Low</th>
+          </tr></thead>
+          <tbody>${rows.map(r => `
+            <tr>
+              <td>${esc(bucketLabel(r.bucket_start, bucket))}</td>
+              <td class="num">${fmtNum(r.findings_by_severity?.critical || 0)}</td>
+              <td class="num">${fmtNum(r.findings_by_severity?.high || 0)}</td>
+              <td class="num">${fmtNum(r.findings_by_severity?.medium || 0)}</td>
+              <td class="num">${fmtNum(r.findings_by_severity?.low || 0)}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table></div>
+      </details>
 
-      <div class="card__head" style="margin-top:24px"><h2>Export a summary</h2></div>
+      ${level !== 'agent' ? `
+        <div id="an-roster" style="margin-top:28px"></div>` : ''}
+
+      <div class="card__head" style="margin-top:28px"><h2>Export a summary</h2></div>
       <p class="muted" style="margin:0 0 12px">
         Same data as above, formatted as a clean document — no internal jargon,
         no commission or override figures (Lana doesn't track those).
@@ -222,14 +400,60 @@ export async function analytics(main) {
 
     body.querySelectorAll('[data-dim]').forEach(cb => cb.addEventListener('change', () => {
       if (cb.checked) activeDims.add(cb.dataset.dim); else activeDims.delete(cb.dataset.dim);
-      renderChart();
+      renderManagerView();
     }));
     document.getElementById('an-compliance-toggle').addEventListener('change', e => {
       showCompliance = e.target.checked;
-      renderChart();
+      renderManagerView();
     });
     document.getElementById('an-export-comp').addEventListener('click', e => exportReport('comp', e.currentTarget));
     document.getElementById('an-export-fmo').addEventListener('click', e => exportReport('fmo', e.currentTarget));
+
+    if (level !== 'agent') renderRoster();
+  }
+
+  // Agency-wide and By team both get this — "who needs attention" at a
+  // glance, not just one aggregate number. Re-sorting only re-renders this
+  // block from the already-fetched roster, no refetch.
+  function renderRoster() {
+    const host = document.getElementById('an-roster');
+    if (!host) return;
+
+    if (lastRoster.length === 0) {
+      host.innerHTML = `
+        <div class="card__head"><h2>Agent roster</h2></div>
+        ${empty('No agents with scored calls in this selection yet.')}`;
+      return;
+    }
+
+    const sorted = lastRoster.slice().sort((a, b) => compareRoster(a, b, rosterSort));
+
+    host.innerHTML = `
+      <div class="card__head">
+        <h2>Agent roster</h2>
+        <div style="display:flex;gap:6px">
+          ${[['decline', 'Biggest decline'], ['score', 'Score'], ['name', 'Name']].map(([key, lbl]) => `
+            <button type="button" class="btn btn--sm ${rosterSort === key ? 'btn--primary' : 'btn--ghost'}" data-roster-sort="${key}">${lbl}</button>`).join('')}
+        </div>
+      </div>
+      <div class="tablewrap"><table>
+        <thead><tr>
+          <th>Agent</th><th class="num">Latest score</th><th class="num">vs prior</th><th>Status</th>
+        </tr></thead>
+        <tbody>${sorted.map(r => `
+          <tr class="${rosterFlagged(r) ? 'roster-row--flagged' : ''}">
+            <td>${esc(r.full_name)}</td>
+            <td class="num tnum">${esc(r.latest_overall)}</td>
+            <td class="num">${trendDelta(r.latest_overall, r.prior_overall)}</td>
+            <td>${r.passing
+              ? '<span class="chip chip--good">✓ Passing</span>'
+              : `<span class="chip chip--critical">✕ Below ${PASSING_SCORE}</span>`}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table></div>`;
+
+    host.querySelectorAll('[data-roster-sort]').forEach(btn =>
+      btn.addEventListener('click', () => { rosterSort = btn.dataset.rosterSort; renderRoster(); }));
   }
 
   function currentScopeLabel() {
@@ -238,15 +462,15 @@ export async function analytics(main) {
     return 'Agency-wide';
   }
 
-  async function exportReport(mode, btn) {
+  async function exportReport(mode_, btn) {
     const original = btn.textContent;
     btn.disabled = true;
     btn.textContent = 'Opening report…';
     try {
       const scopeLabel = currentScopeLabel();
-      const html = summaryReportHtml({ scopeLabel, mode, bucket, rows: lastRows });
+      const html = summaryReportHtml({ scopeLabel, mode: mode_, bucket, rows: lastRows });
       const slug = scopeLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-      await exportHtmlToPdf(html, `quality-summary-${slug}-${mode}.pdf`);
+      await exportHtmlToPdf(html, `quality-summary-${slug}-${mode_}.pdf`);
     } catch (err) {
       toast(err.message || 'Could not open the report.', 'error');
     } finally {
@@ -260,9 +484,8 @@ export async function analytics(main) {
 }
 
 /* --- summary report ---------------------------------------------------------
-   Same self-contained-HTML-then-native-print approach as the coaching report
-   (views-scoring.js's exportHtmlToPdf call) — its own <html>/<body>, opened
-   as a real page and handed to the browser's print, not screenshotted.
+   Its own real document, opened in a new tab and handed to the browser's
+   native print (see exportHtmlToPdf in ui.js) — not screenshotted.
    table-layout:fixed / overflow-wrap still guards against a long word
    forcing a column wider than the page, independent of how it's rendered.
 

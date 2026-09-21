@@ -2,7 +2,7 @@
 // Rendering helpers: formatting, date ranges, and the small set of chart
 // primitives the dashboard needs (stat tile, meter, bar row).
 // ---------------------------------------------------------------------------
-import { TIMEZONE, STATUSES, APPT_STATUSES } from './config.js?v=52';
+import { TIMEZONE, STATUSES, APPT_STATUSES } from './config.js?v=53';
 
 /* --- escaping ------------------------------------------------------------ */
 // Every value that reaches innerHTML goes through this. Client names and notes
@@ -134,13 +134,17 @@ export function legend(items) {
     .join('')}</div>`;
 }
 
-// Multi-series line chart over a fixed set of x labels (one point per bucket).
-// A null value means "no calls that bucket" — never drawn as zero and never
-// bridged by a line to its neighbors, since a gap and a bad score are
-// different facts and a connecting line would claim data that isn't there.
+// Multi-series trend chart over a fixed set of x labels (one point per
+// bucket) — line or grouped bars, picked by the caller. A null value means
+// "no calls that bucket": never drawn as zero, and in line mode never
+// bridged to its neighbors, since a gap and a bad score are different facts
+// and a connecting line would claim data that isn't there. Bar mode is what
+// a small number of periods should use instead of a line — two or three
+// points joined by a straight line reads as an established trend when it
+// isn't one yet; bars make each period read as its own fact.
 // viewBox scaling (not a fixed pixel width) is what makes this responsive
 // down to phone width without a resize handler.
-export function lineChart({ series, labels, min = 0, max = 100, height = 220 }) {
+export function trendChart({ series, labels, min = 0, max = 100, height = 220, mode = 'line', threshold = null }) {
   const width = 640;
   const padL = 32, padR = 12, padT = 12, padB = 22;
   const innerW = width - padL - padR;
@@ -160,34 +164,59 @@ export function lineChart({ series, labels, min = 0, max = 100, height = 220 }) 
     .map((l, i) => `<text x="${xFor(i)}" y="${height - 4}" text-anchor="middle" class="chart-axis">${esc(l)}</text>`)
     .join('');
 
-  const seriesSvg = series.map(s => {
-    // Split into runs of consecutive non-null points — each run is its own
-    // polyline, so a gap breaks the line instead of interpolating through it.
-    const runs = [];
-    let run = [];
-    s.values.forEach((v, i) => {
-      if (v == null) {
-        if (run.length) runs.push(run);
-        run = [];
-      } else {
-        run.push([xFor(i), yFor(v)]);
-      }
-    });
-    if (run.length) runs.push(run);
+  const thresholdSvg = threshold ? `
+    <line x1="${padL}" y1="${yFor(threshold.value)}" x2="${width - padR}" y2="${yFor(threshold.value)}" class="chart-threshold" />
+    <text x="${width - padR}" y="${yFor(threshold.value) - 4}" text-anchor="end" class="chart-threshold-label">${esc(threshold.label)}</text>` : '';
 
-    const dash = s.dashed ? ' stroke-dasharray="5,4"' : '';
-    const lines = runs
-      .map(r => `<polyline points="${r.map(([x, y]) => `${x},${y}`).join(' ')}" fill="none" stroke="${s.color}" stroke-width="2"${dash} />`)
-      .join('');
-    const dots = s.values
-      .map((v, i) => (v == null ? '' : `<circle cx="${xFor(i)}" cy="${yFor(v)}" r="3" fill="${s.color}" />`))
-      .join('');
-    return lines + dots;
-  }).join('');
+  let seriesSvg;
+  if (mode === 'bar') {
+    // Each bucket's slot is split evenly among the active series so bars sit
+    // side by side — capped at 60px wide total so a handful of periods
+    // doesn't produce comically fat bars.
+    const slotW = n <= 1 ? innerW : innerW / n;
+    const groupW = Math.min(slotW * 0.7, 60);
+    const barW = series.length > 0 ? groupW / series.length : groupW;
+    seriesSvg = labels.map((_, i) => {
+      const groupLeft = xFor(i) - groupW / 2;
+      return series.map((s, j) => {
+        const v = s.values[i];
+        if (v == null) return '';
+        const y = yFor(v);
+        const barH = padT + innerH - y;
+        return `<rect x="${groupLeft + j * barW}" y="${y}" width="${Math.max(1, barW - 2)}" height="${Math.max(0, barH)}" fill="${s.color}" rx="2" />`;
+      }).join('');
+    }).join('');
+  } else {
+    seriesSvg = series.map(s => {
+      // Split into runs of consecutive non-null points — each run is its own
+      // polyline, so a gap breaks the line instead of interpolating through it.
+      const runs = [];
+      let run = [];
+      s.values.forEach((v, i) => {
+        if (v == null) {
+          if (run.length) runs.push(run);
+          run = [];
+        } else {
+          run.push([xFor(i), yFor(v)]);
+        }
+      });
+      if (run.length) runs.push(run);
+
+      const dash = s.dashed ? ' stroke-dasharray="5,4"' : '';
+      const lines = runs
+        .map(r => `<polyline points="${r.map(([x, y]) => `${x},${y}`).join(' ')}" fill="none" stroke="${s.color}" stroke-width="2"${dash} />`)
+        .join('');
+      const dots = s.values
+        .map((v, i) => (v == null ? '' : `<circle cx="${xFor(i)}" cy="${yFor(v)}" r="3" fill="${s.color}" />`))
+        .join('');
+      return lines + dots;
+    }).join('');
+  }
 
   return `
     <svg viewBox="0 0 ${width} ${height}" class="linechart" role="img" aria-label="Trend chart">
       ${gridLines}
+      ${thresholdSvg}
       ${seriesSvg}
       ${xLabels}
     </svg>`;

@@ -449,6 +449,17 @@ code {
 .linechart { width: 100%; height: auto; display: block; }
 .chart-grid { stroke: var(--grid); stroke-width: 1; }
 .chart-axis { font-size: 10px; fill: var(--text-muted); }
+/* Distinct from a data series on purpose — a fixed pass/fail line is a rule,
+   not a measurement, so it reads as dashed and muted rather than another
+   colored series competing with the real data. */
+.chart-threshold { stroke: var(--text-muted); stroke-width: 1.5; stroke-dasharray: 4,4; }
+.chart-threshold-label { font-size: 10px; fill: var(--text-muted); font-weight: 600; }
+
+/* Roster rows flagged for a decline or worsened compliance — a border, not
+   just a background tint, so it reads at a glance even on the striped
+   table backgrounds. */
+tr.roster-row--flagged { border-left: 3px solid var(--critical); }
+tr.roster-row--flagged td:first-child { padding-left: 7px; }
 
 .trend { font-size: 12px; font-weight: 600; white-space: nowrap; }
 .trend--good { color: var(--good); }
