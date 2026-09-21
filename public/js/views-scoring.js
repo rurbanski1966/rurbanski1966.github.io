@@ -5,12 +5,12 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=50';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES } from './config.js?v=50';
+import * as db from './db.js?v=51';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES } from './config.js?v=51';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
   toast, statTile, barRow, empty, spinner, selectField, exportHtmlToPdf,
-} from './ui.js?v=50';
+} from './ui.js?v=51';
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -1479,10 +1479,8 @@ function coachingReportHtml(rec, score) {
 
   ${score.is_overridden ? `
   <h2>Summary of Call</h2>
-  <p>${esc(score.manual_summary || reviewerSummaryText(score))}</p>` : ''}
-
-  ${score.summary ? `
-  <h2>${score.is_overridden ? "Model's original summary" : 'Call summary'}</h2>
+  <p>${esc(score.manual_summary || reviewerSummaryText(score))}</p>` : score.summary ? `
+  <h2>Call summary</h2>
   <p>${esc(score.summary)}</p>` : ''}
 
   <h2>By dimension</h2>
