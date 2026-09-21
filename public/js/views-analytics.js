@@ -5,12 +5,12 @@
 // enforced by app.js's route roles and by analytics_trend()/analytics_agents()
 // themselves (migration 030).
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=49';
-import { SCORE_DIMENSIONS } from './config.js?v=49';
+import * as db from './db.js?v=50';
+import { SCORE_DIMENSIONS } from './config.js?v=50';
 import {
   esc, fmtNum, toast, empty, spinner, selectField, statTile,
   lineChart, legend, trendDelta, exportHtmlToPdf,
-} from './ui.js?v=49';
+} from './ui.js?v=50';
 
 // Same label precedence as views-scoring.js's dimLabel, minus the per-score
 // stamped label — analytics_trend() only ever returns a bare average number
@@ -230,14 +230,14 @@ export async function analytics(main) {
   async function exportReport(mode, btn) {
     const original = btn.textContent;
     btn.disabled = true;
-    btn.textContent = 'Generating PDF…';
+    btn.textContent = 'Opening report…';
     try {
       const scopeLabel = currentScopeLabel();
       const html = summaryReportHtml({ scopeLabel, mode, bucket, rows: lastRows });
       const slug = scopeLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
       await exportHtmlToPdf(html, `quality-summary-${slug}-${mode}.pdf`);
     } catch (err) {
-      toast(err.message || 'Could not generate the PDF.', 'error');
+      toast(err.message || 'Could not open the report.', 'error');
     } finally {
       btn.disabled = false;
       btn.textContent = original;
@@ -249,11 +249,11 @@ export async function analytics(main) {
 }
 
 /* --- summary report ---------------------------------------------------------
-   Same self-contained-HTML-then-html2pdf approach as the coaching report
-   (views-scoring.js), including the table-layout:fixed / overflow-wrap fix
-   that stopped that report's text from clipping on the right edge — a table
-   this wide needs the same guard against a long word overflowing the fixed
-   860px render width.
+   Same self-contained-HTML-then-native-print approach as the coaching report
+   (views-scoring.js's exportHtmlToPdf call) — its own <html>/<body>, opened
+   as a real page and handed to the browser's print, not screenshotted.
+   table-layout:fixed / overflow-wrap still guards against a long word
+   forcing a column wider than the page, independent of how it's rendered.
 
    'comp' and 'fmo' modes share every number; only the framing text differs.
    The FMO disclaimer says plainly what this is NOT — commission, override,
@@ -300,8 +300,9 @@ function summaryReportHtml({ scopeLabel, mode, bucket, rows }) {
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;800&display=swap" rel="stylesheet">
 <style>
+  @page { size: letter; margin: 0.6in; }
   * { box-sizing: border-box; }
-  body { font-family: -apple-system, Segoe UI, Arial, sans-serif; font-size: 12px; max-width: 860px; margin: 0 auto; padding: 32px 40px 60px 28px; color: #1a1a1a; background: #fff; line-height: 1.5; overflow-wrap: break-word; }
+  body { font-family: -apple-system, Segoe UI, Arial, sans-serif; font-size: 12px; color: #1a1a1a; background: #fff; line-height: 1.5; overflow-wrap: break-word; }
   .lana-header { display: flex; flex-direction: column; gap: 6px; margin-bottom: 24px; }
   .lana-lockup { display: flex; align-items: center; gap: 8px; }
   .lana-word { font-family: 'Manrope', -apple-system, Segoe UI, Arial, sans-serif; font-weight: 800; font-size: 22px; letter-spacing: -0.02em; color: #1E1029; }
@@ -309,7 +310,7 @@ function summaryReportHtml({ scopeLabel, mode, bucket, rows }) {
   .lana-tagline { font-family: 'Manrope', -apple-system, Segoe UI, Arial, sans-serif; font-size: 11px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: #8B7FA0; }
   h1 { font-size: 22px; margin: 0 0 4px; }
   h2 { font-size: 16px; margin: 28px 0 10px; border-bottom: 1px solid #ddd; padding-bottom: 6px; page-break-after: avoid; break-after: avoid; }
-  .muted { color: #666; font-size: 13px; }
+  .muted { color: #666; font-size: 12px; }
   .kpis { display: flex; gap: 16px; flex-wrap: wrap; margin: 16px 0; }
   .kpi { border: 1px solid #ddd; border-radius: 8px; padding: 12px 16px; min-width: 140px; background: #f4f4f4; }
   .kpi .lbl { font-size: 12px; color: #555; }

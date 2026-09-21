@@ -5,12 +5,12 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=49';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES } from './config.js?v=49';
+import * as db from './db.js?v=50';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES } from './config.js?v=50';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
   toast, statTile, barRow, empty, spinner, selectField, exportHtmlToPdf,
-} from './ui.js?v=49';
+} from './ui.js?v=50';
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -668,7 +668,7 @@ export async function reviewDetail(main, ctx, recordingId) {
       const btn = e.currentTarget;
       const originalText = btn.textContent;
       btn.disabled = true;
-      btn.textContent = 'Generating PDF…';
+      btn.textContent = 'Opening report…';
       let summaryUpdated = false;
       try {
         if (score?.is_overridden) {
@@ -689,12 +689,12 @@ export async function reviewDetail(main, ctx, recordingId) {
           }
         }
 
-        btn.textContent = 'Generating PDF…';
+        btn.textContent = 'Opening report…';
         const agentSlug = (rec.agent?.full_name || rec.agent_name || 'agent')
           .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
         await exportHtmlToPdf(coachingReportHtml(rec, score), `coaching-report-${agentSlug}-${rec.call_on}.pdf`);
       } catch (err) {
-        toast(err.message || 'Could not generate the PDF.', 'error');
+        toast(err.message || 'Could not open the report.', 'error');
       } finally {
         btn.disabled = false;
         btn.textContent = originalText;
@@ -1370,13 +1370,12 @@ function scoreFooterHtml(score) {
 }
 
 /* --- coaching report -------------------------------------------------------
-   A self-contained HTML document — built as its own printable page (see
-   coachingReportHtml) and then rendered into an actual PDF via html2pdf.js
-   (loaded from cdnjs on first use), rather than depending on app.css or the
-   browser's own print-to-PDF flow. Only offered once a call has an actual
-   manual grade on it (score.is_overridden): the point is to hand an agent
-   the reviewer's corrected read of the call, not the model's unreviewed
-   first pass.
+   A self-contained HTML document — its own <html>/<head>/<body>, opened as
+   its own real page in a new tab and handed to the browser's native print
+   (see exportHtmlToPdf in ui.js), not screenshotted. Only offered once a
+   call has an actual manual grade on it (score.is_overridden): the point is
+   to hand an agent the reviewer's corrected read of the call, not the
+   model's unreviewed first pass.
    -------------------------------------------------------------------------- */
 function coachingReportHtml(rec, score) {
   const eff = effectiveOf(score);
@@ -1401,8 +1400,9 @@ function coachingReportHtml(rec, score) {
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;800&display=swap" rel="stylesheet">
 <style>
+  @page { size: letter; margin: 0.6in; }
   * { box-sizing: border-box; }
-  body { font-family: -apple-system, Segoe UI, Arial, sans-serif; font-size: 12px; max-width: 860px; margin: 0 auto; padding: 32px 40px 60px 28px; color: #1a1a1a; background: #fff; line-height: 1.5; overflow-wrap: break-word; }
+  body { font-family: -apple-system, Segoe UI, Arial, sans-serif; font-size: 12px; color: #1a1a1a; background: #fff; line-height: 1.5; overflow-wrap: break-word; }
   .lana-header { display: flex; flex-direction: column; gap: 6px; margin-bottom: 24px; }
   .lana-lockup { display: flex; align-items: center; gap: 8px; }
   .lana-word { font-family: 'Manrope', -apple-system, Segoe UI, Arial, sans-serif; font-weight: 800; font-size: 22px; letter-spacing: -0.02em; color: #1E1029; }
@@ -1412,8 +1412,6 @@ function coachingReportHtml(rec, score) {
   h2 { font-size: 16px; margin: 28px 0 10px; border-bottom: 1px solid #ddd; padding-bottom: 6px; }
   .muted { color: #666; font-size: 12px; }
   .kpis { display: flex; gap: 16px; flex-wrap: wrap; margin: 16px 0; }
-  /* Always an explicit, opaque background — an unset one can render solid
-     black instead of transparent when html2canvas rasterizes this. */
   .kpi { border: 1px solid #ddd; border-radius: 8px; padding: 12px 16px; min-width: 140px; background: #f4f4f4; }
   .kpi .lbl { font-size: 12px; color: #555; }
   .kpi .val { font-size: 24px; font-weight: 700; color: #1a1a1a; }
@@ -1428,8 +1426,8 @@ function coachingReportHtml(rec, score) {
   th { color: #666; font-weight: 600; font-size: 11px; text-transform: uppercase; }
   /* Fixed layout needs explicit widths or it splits 3 columns evenly, starving
      the long text column and forcing the short label columns wider than the
-     content needs — that's what let a long word push the table past the
-     container's edge and get clipped by html2canvas on the right. */
+     content needs — that's what let a long word push a column wider than the
+     page and run off the right edge. */
   th:nth-child(1), td:nth-child(1) { width: 22%; }
   th:nth-child(2), td:nth-child(2) { width: 14%; }
   blockquote { margin: 6px 0 0; padding-left: 10px; border-left: 3px solid #ccc; font-size: 12px; color: #444; font-style: italic; overflow-wrap: break-word; word-break: break-word; }
