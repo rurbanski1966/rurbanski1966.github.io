@@ -2,7 +2,7 @@
 // Rendering helpers: formatting, date ranges, and the small set of chart
 // primitives the dashboard needs (stat tile, meter, bar row).
 // ---------------------------------------------------------------------------
-import { TIMEZONE, STATUSES, APPT_STATUSES } from './config.js?v=47';
+import { TIMEZONE, STATUSES, APPT_STATUSES } from './config.js?v=48';
 
 /* --- escaping ------------------------------------------------------------ */
 // Every value that reaches innerHTML goes through this. Client names and notes
@@ -240,6 +240,18 @@ export function loadHtml2Pdf() {
 // plus overflow-wrap on the document's own cells is still the caller's job —
 // this only rasterizes what it's given, so a table that overflows the fixed
 // 860px width still gets clipped on the right by html2canvas either way.
+//
+// scrollX/scrollY: 0 matters just as much as the width. html2canvas defaults
+// to the REAL page's current scroll position when computing what to capture,
+// even though .from(container) names one specific element — open a call with
+// a long transcript scrolled partway down (or a wide table scrolled right)
+// and the capture window shifts by exactly that offset, cropping the right
+// (and/or bottom) edge of every page of the PDF. This is the actual cause of
+// the "text is cut off on the right" report; the table-layout/overflow-wrap
+// fix above addresses a real but different failure mode and wasn't enough on
+// its own. windowWidth pins the layout width html2canvas lays the clone out
+// at to the container's own width, so it can't be affected by how narrow or
+// wide the real browser window happens to be either.
 export async function exportHtmlToPdf(html, filename) {
   await loadHtml2Pdf();
 
@@ -259,7 +271,7 @@ export async function exportHtmlToPdf(html, filename) {
         margin: 24,
         filename,
         image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true },
+        html2canvas: { scale: 2, useCORS: true, scrollX: 0, scrollY: 0, windowWidth: 860 },
         jsPDF: { unit: 'pt', format: 'letter', orientation: 'portrait' },
         pagebreak: { mode: ['css', 'legacy'] },
       })

@@ -5,12 +5,12 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=47';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES } from './config.js?v=47';
+import * as db from './db.js?v=48';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES } from './config.js?v=48';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
   toast, statTile, barRow, empty, spinner, selectField, exportHtmlToPdf,
-} from './ui.js?v=47';
+} from './ui.js?v=48';
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -1402,7 +1402,7 @@ function coachingReportHtml(rec, score) {
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;800&display=swap" rel="stylesheet">
 <style>
   * { box-sizing: border-box; }
-  body { font-family: -apple-system, Segoe UI, Arial, sans-serif; font-size: 13px; max-width: 860px; margin: 0 auto; padding: 32px 28px 60px 24px; color: #1a1a1a; background: #fff; line-height: 1.5; overflow-wrap: break-word; }
+  body { font-family: -apple-system, Segoe UI, Arial, sans-serif; font-size: 12px; max-width: 860px; margin: 0 auto; padding: 32px 40px 60px 28px; color: #1a1a1a; background: #fff; line-height: 1.5; overflow-wrap: break-word; }
   .lana-header { display: flex; flex-direction: column; gap: 6px; margin-bottom: 24px; }
   .lana-lockup { display: flex; align-items: center; gap: 8px; }
   .lana-word { font-family: 'Manrope', -apple-system, Segoe UI, Arial, sans-serif; font-weight: 800; font-size: 22px; letter-spacing: -0.02em; color: #1E1029; }
@@ -1410,7 +1410,7 @@ function coachingReportHtml(rec, score) {
   .lana-tagline { font-family: 'Manrope', -apple-system, Segoe UI, Arial, sans-serif; font-size: 11px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: #8B7FA0; }
   h1 { font-size: 22px; margin: 0 0 4px; }
   h2 { font-size: 16px; margin: 28px 0 10px; border-bottom: 1px solid #ddd; padding-bottom: 6px; }
-  .muted { color: #666; font-size: 13px; }
+  .muted { color: #666; font-size: 12px; }
   .kpis { display: flex; gap: 16px; flex-wrap: wrap; margin: 16px 0; }
   /* Always an explicit, opaque background — an unset one can render solid
      black instead of transparent when html2canvas rasterizes this. */
@@ -1424,8 +1424,8 @@ function coachingReportHtml(rec, score) {
   .kpi--bad  { background: #fdeceb; border-color: #c0392b; }
   .kpi--bad  .val { color: #96281d; }
   table { width: 100%; table-layout: fixed; border-collapse: collapse; margin: 8px 0 20px; }
-  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e5e5e5; vertical-align: top; font-size: 13px; overflow-wrap: break-word; word-break: break-word; }
-  th { color: #666; font-weight: 600; font-size: 12px; text-transform: uppercase; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e5e5e5; vertical-align: top; font-size: 12px; overflow-wrap: break-word; word-break: break-word; }
+  th { color: #666; font-weight: 600; font-size: 11px; text-transform: uppercase; }
   /* Fixed layout needs explicit widths or it splits 3 columns evenly, starving
      the long text column and forcing the short label columns wider than the
      content needs — that's what let a long word push the table past the

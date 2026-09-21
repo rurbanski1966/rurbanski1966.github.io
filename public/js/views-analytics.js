@@ -5,12 +5,12 @@
 // enforced by app.js's route roles and by analytics_trend()/analytics_agents()
 // themselves (migration 030).
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=47';
-import { SCORE_DIMENSIONS } from './config.js?v=47';
+import * as db from './db.js?v=48';
+import { SCORE_DIMENSIONS } from './config.js?v=48';
 import {
   esc, fmtNum, toast, empty, spinner, selectField, statTile,
   lineChart, legend, trendDelta, exportHtmlToPdf,
-} from './ui.js?v=47';
+} from './ui.js?v=48';
 
 // Same label precedence as views-scoring.js's dimLabel, minus the per-score
 // stamped label — analytics_trend() only ever returns a bare average number
@@ -301,7 +301,7 @@ function summaryReportHtml({ scopeLabel, mode, bucket, rows }) {
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;800&display=swap" rel="stylesheet">
 <style>
   * { box-sizing: border-box; }
-  body { font-family: -apple-system, Segoe UI, Arial, sans-serif; font-size: 13px; max-width: 860px; margin: 0 auto; padding: 32px 28px 60px 24px; color: #1a1a1a; background: #fff; line-height: 1.5; overflow-wrap: break-word; }
+  body { font-family: -apple-system, Segoe UI, Arial, sans-serif; font-size: 12px; max-width: 860px; margin: 0 auto; padding: 32px 40px 60px 28px; color: #1a1a1a; background: #fff; line-height: 1.5; overflow-wrap: break-word; }
   .lana-header { display: flex; flex-direction: column; gap: 6px; margin-bottom: 24px; }
   .lana-lockup { display: flex; align-items: center; gap: 8px; }
   .lana-word { font-family: 'Manrope', -apple-system, Segoe UI, Arial, sans-serif; font-weight: 800; font-size: 22px; letter-spacing: -0.02em; color: #1E1029; }
