@@ -11,7 +11,7 @@
 // an unauthenticated empty array reach the UI.
 // ---------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=45';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=46';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true },
@@ -241,6 +241,22 @@ export async function adminReport(start, end) {
 export async function agentSpendReport() {
   await requireSession();
   return unwrap(await supabase.rpc('agent_spend_report'));
+}
+
+/* --- analytics ------------------------------------------------------------ */
+export async function analyticsAgents() {
+  await requireSession();
+  return unwrap(await supabase.rpc('analytics_agents'));
+}
+
+export async function analyticsTrend({ bucket, agentId, agentName, teamId } = {}) {
+  await requireSession();
+  return unwrap(await supabase.rpc('analytics_trend', {
+    p_bucket: bucket,
+    p_agent_id: agentId ?? null,
+    p_agent_name: agentName ?? null,
+    p_team_id: teamId ?? null,
+  }));
 }
 
 /* --- call scoring -------------------------------------------------------- */

@@ -2,7 +2,7 @@
 // Rendering helpers: formatting, date ranges, and the small set of chart
 // primitives the dashboard needs (stat tile, meter, bar row).
 // ---------------------------------------------------------------------------
-import { TIMEZONE, STATUSES, APPT_STATUSES } from './config.js?v=45';
+import { TIMEZONE, STATUSES, APPT_STATUSES } from './config.js?v=46';
 
 /* --- escaping ------------------------------------------------------------ */
 // Every value that reaches innerHTML goes through this. Client names and notes
@@ -132,6 +132,80 @@ export function legend(items) {
   return `<div class="legend">${items
     .map(i => `<span class="legend__item"><span class="legend__swatch" style="background:${i.color}"></span>${esc(i.label)}</span>`)
     .join('')}</div>`;
+}
+
+// Multi-series line chart over a fixed set of x labels (one point per bucket).
+// A null value means "no calls that bucket" — never drawn as zero and never
+// bridged by a line to its neighbors, since a gap and a bad score are
+// different facts and a connecting line would claim data that isn't there.
+// viewBox scaling (not a fixed pixel width) is what makes this responsive
+// down to phone width without a resize handler.
+export function lineChart({ series, labels, min = 0, max = 100, height = 220 }) {
+  const width = 640;
+  const padL = 32, padR = 12, padT = 12, padB = 22;
+  const innerW = width - padL - padR;
+  const innerH = height - padT - padB;
+  const n = labels.length;
+  const xFor = i => (n <= 1 ? padL + innerW / 2 : padL + (innerW * i) / (n - 1));
+  const yFor = v => padT + innerH - ((v - min) / (max - min)) * innerH;
+
+  const gridLines = [0, 25, 50, 75, 100]
+    .filter(v => v >= min && v <= max)
+    .map(v => `
+      <line x1="${padL}" y1="${yFor(v)}" x2="${width - padR}" y2="${yFor(v)}" class="chart-grid" />
+      <text x="${padL - 6}" y="${yFor(v) + 4}" text-anchor="end" class="chart-axis">${v}</text>`)
+    .join('');
+
+  const xLabels = labels
+    .map((l, i) => `<text x="${xFor(i)}" y="${height - 4}" text-anchor="middle" class="chart-axis">${esc(l)}</text>`)
+    .join('');
+
+  const seriesSvg = series.map(s => {
+    // Split into runs of consecutive non-null points — each run is its own
+    // polyline, so a gap breaks the line instead of interpolating through it.
+    const runs = [];
+    let run = [];
+    s.values.forEach((v, i) => {
+      if (v == null) {
+        if (run.length) runs.push(run);
+        run = [];
+      } else {
+        run.push([xFor(i), yFor(v)]);
+      }
+    });
+    if (run.length) runs.push(run);
+
+    const dash = s.dashed ? ' stroke-dasharray="5,4"' : '';
+    const lines = runs
+      .map(r => `<polyline points="${r.map(([x, y]) => `${x},${y}`).join(' ')}" fill="none" stroke="${s.color}" stroke-width="2"${dash} />`)
+      .join('');
+    const dots = s.values
+      .map((v, i) => (v == null ? '' : `<circle cx="${xFor(i)}" cy="${yFor(v)}" r="3" fill="${s.color}" />`))
+      .join('');
+    return lines + dots;
+  }).join('');
+
+  return `
+    <svg viewBox="0 0 ${width} ${height}" class="linechart" role="img" aria-label="Trend chart">
+      ${gridLines}
+      ${seriesSvg}
+      ${xLabels}
+    </svg>`;
+}
+
+// Up/down/flat indicator comparing the latest bucket to the one before it.
+// Text alongside the arrow, never color alone, same reasoning as statusChip.
+export function trendDelta(current, previous, { higherIsBetter = true, digits = 1, suffix = '' } = {}) {
+  if (current == null || previous == null) return '<span class="muted">—</span>';
+  const delta = Number(current) - Number(previous);
+  const rounded = Math.abs(delta).toFixed(digits);
+  if (Math.abs(delta) < Math.pow(10, -digits) / 2) {
+    return `<span class="trend trend--flat">→ flat</span>`;
+  }
+  const up = delta > 0;
+  const good = up === higherIsBetter;
+  const arrow = up ? '▲' : '▼';
+  return `<span class="trend trend--${good ? 'good' : 'bad'}">${arrow} ${rounded}${suffix} vs prior</span>`;
 }
 
 // Status chips carry an icon and a word, so state never rides on color alone.

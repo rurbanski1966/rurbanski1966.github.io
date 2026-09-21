@@ -444,6 +444,17 @@ code {
 .legend__item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); }
 .legend__swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
 
+/* viewBox scaling, not a fixed width — the chart shrinks with its card down
+   to phone width instead of forcing horizontal scroll. */
+.linechart { width: 100%; height: auto; display: block; }
+.chart-grid { stroke: var(--grid); stroke-width: 1; }
+.chart-axis { font-size: 10px; fill: var(--text-muted); }
+
+.trend { font-size: 12px; font-weight: 600; white-space: nowrap; }
+.trend--good { color: var(--good); }
+.trend--bad  { color: var(--critical); }
+.trend--flat { color: var(--text-muted); font-weight: 400; }
+
 /* Status always ships icon + label, never color alone. */
 .chip {
   display: inline-flex;
