@@ -5,12 +5,12 @@
 // enforced by app.js's route roles and by analytics_trend()/analytics_agents()
 // themselves (migration 030).
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=48';
-import { SCORE_DIMENSIONS } from './config.js?v=48';
+import * as db from './db.js?v=49';
+import { SCORE_DIMENSIONS } from './config.js?v=49';
 import {
   esc, fmtNum, toast, empty, spinner, selectField, statTile,
   lineChart, legend, trendDelta, exportHtmlToPdf,
-} from './ui.js?v=48';
+} from './ui.js?v=49';
 
 // Same label precedence as views-scoring.js's dimLabel, minus the per-score
 // stamped label — analytics_trend() only ever returns a bare average number
