@@ -11,7 +11,7 @@
 // an unauthenticated empty array reach the UI.
 // ---------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=53';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=54';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true },
@@ -540,16 +540,16 @@ export async function scoringLeaderboard(start, end) {
    call detail page. There's no separate "grade it again" step; per Ryan
    2026-09-17, that would just duplicate the manual review sections.
    -------------------------------------------------------------------------- */
-export async function calibrationByDimension(start, end) {
+export async function calibrationByDimension(start, end, callType) {
   await requireSession();
   return unwrap(
-    await supabase.rpc('calibration_by_dimension', { p_start: start, p_end: end })
+    await supabase.rpc('calibration_by_dimension', { p_start: start, p_end: end, p_call_type: callType ?? null })
   );
 }
 
-export async function calibrationSummary(start, end) {
+export async function calibrationSummary(start, end, callType) {
   await requireSession();
-  const rows = unwrap(await supabase.rpc('calibration_summary', { p_start: start, p_end: end }));
+  const rows = unwrap(await supabase.rpc('calibration_summary', { p_start: start, p_end: end, p_call_type: callType ?? null }));
   return (
     rows?.[0] ?? {
       reviews: 0, model_avg: null, human_avg: null, delta: null,

@@ -5,12 +5,12 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=53';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES } from './config.js?v=53';
+import * as db from './db.js?v=54';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES } from './config.js?v=54';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
   toast, statTile, barRow, empty, spinner, selectField, exportHtmlToPdf,
-} from './ui.js?v=53';
+} from './ui.js?v=54';
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -1552,18 +1552,23 @@ export async function calibration(main) {
       <h1>Calibration</h1>
       <div class="page__sub">Where the model and your reviewers disagree — and what to change</div>
     </div></div>
-    <div class="filters">${selectField('cal-range', 'Period', RANGES, 'quarter')}</div>
+    <div class="filters">
+      ${selectField('cal-range', 'Period', RANGES, 'quarter')}
+      ${selectField('cal-call-type', 'Call type', [{ value: '', label: 'All types' }, ...CALL_TYPES], '')}
+    </div>
     <div id="body">${spinner()}</div>`;
 
   const body = document.getElementById('body');
   const rangeSel = document.getElementById('cal-range');
+  const callTypeSel = document.getElementById('cal-call-type');
 
   async function draw() {
     body.innerHTML = spinner();
     const { start, end } = range(rangeSel.value);
+    const callType = callTypeSel.value || undefined;
     const [summary, dims] = await Promise.all([
-      db.calibrationSummary(start, end),
-      db.calibrationByDimension(start, end),
+      db.calibrationSummary(start, end, callType),
+      db.calibrationByDimension(start, end, callType),
     ]);
 
     if (!Number(summary.reviews)) {
@@ -1673,6 +1678,7 @@ export async function calibration(main) {
   }
 
   rangeSel.addEventListener('change', draw);
+  callTypeSel.addEventListener('change', draw);
   await draw();
 }
 
