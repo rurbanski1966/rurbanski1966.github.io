@@ -2,7 +2,7 @@
 // Rendering helpers: formatting, date ranges, and the small set of chart
 // primitives the dashboard needs (stat tile, meter, bar row).
 // ---------------------------------------------------------------------------
-import { TIMEZONE, STATUSES, APPT_STATUSES } from './config.js?v=54';
+import { TIMEZONE, STATUSES, APPT_STATUSES } from './config.js?v=55';
 
 /* --- escaping ------------------------------------------------------------ */
 // Every value that reaches innerHTML goes through this. Client names and notes
@@ -271,6 +271,37 @@ export async function exportHtmlToPdf(html, filename) {
 
   win.focus();
   win.print();
+}
+
+/* --- direct PDF download ----------------------------------------------------
+   For a report someone needs to immediately attach to an email — print
+   (above) always requires a person to pick "Save as PDF" in a dialog, which
+   a real PDF-generation library doesn't: pdfmake builds an actual vector PDF
+   (not a screenshot, so nothing to clip) and its own .download() triggers a
+   normal same-origin file download with no dialog at all, straight to the
+   browser's Downloads folder. Two scripts, loaded in order: pdfmake.min.js
+   creates window.pdfMake, then vfs_fonts.js attaches the embedded Roboto
+   font data it needs onto that same object — loading them out of order or
+   only the first one leaves pdfMake.vfs empty and PDF generation fails.
+   -------------------------------------------------------------------------- */
+let pdfMakeReady = null;
+export function loadPdfMake() {
+  if (window.pdfMake?.vfs) return Promise.resolve();
+  if (pdfMakeReady) return pdfMakeReady;
+  pdfMakeReady = new Promise((resolve, reject) => {
+    const core = document.createElement('script');
+    core.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js';
+    core.onload = () => {
+      const fonts = document.createElement('script');
+      fonts.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/vfs_fonts.js';
+      fonts.onload = () => resolve();
+      fonts.onerror = () => { pdfMakeReady = null; reject(new Error('Could not load the PDF fonts — check your connection and try again.')); };
+      document.head.appendChild(fonts);
+    };
+    core.onerror = () => { pdfMakeReady = null; reject(new Error('Could not load the PDF library — check your connection and try again.')); };
+    document.head.appendChild(core);
+  });
+  return pdfMakeReady;
 }
 
 // Status chips carry an icon and a word, so state never rides on color alone.

@@ -5,12 +5,12 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=54';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES } from './config.js?v=54';
+import * as db from './db.js?v=55';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES } from './config.js?v=55';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
-  toast, statTile, barRow, empty, spinner, selectField, exportHtmlToPdf,
-} from './ui.js?v=54';
+  toast, statTile, barRow, empty, spinner, selectField, loadPdfMake,
+} from './ui.js?v=55';
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -668,7 +668,7 @@ export async function reviewDetail(main, ctx, recordingId) {
       const btn = e.currentTarget;
       const originalText = btn.textContent;
       btn.disabled = true;
-      btn.textContent = 'Opening report…';
+      btn.textContent = 'Preparing PDF…';
       let summaryUpdated = false;
       try {
         if (score?.is_overridden) {
@@ -689,12 +689,14 @@ export async function reviewDetail(main, ctx, recordingId) {
           }
         }
 
-        btn.textContent = 'Opening report…';
+        btn.textContent = 'Preparing PDF…';
+        await loadPdfMake();
         const agentSlug = (rec.agent?.full_name || rec.agent_name || 'agent')
           .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-        await exportHtmlToPdf(coachingReportHtml(rec, score), `coaching-report-${agentSlug}-${rec.call_on}.pdf`);
+        window.pdfMake.createPdf(coachingReportDocDefinition(rec, score))
+          .download(`coaching-report-${agentSlug}-${rec.call_on}.pdf`);
       } catch (err) {
-        toast(err.message || 'Could not open the report.', 'error');
+        toast(err.message || 'Could not generate the PDF.', 'error');
       } finally {
         btn.disabled = false;
         btn.textContent = originalText;
@@ -1370,14 +1372,18 @@ function scoreFooterHtml(score) {
 }
 
 /* --- coaching report -------------------------------------------------------
-   A self-contained HTML document — its own <html>/<head>/<body>, opened as
-   its own real page in a new tab and handed to the browser's native print
-   (see exportHtmlToPdf in ui.js), not screenshotted. Only offered once a
-   call has an actual manual grade on it (score.is_overridden): the point is
-   to hand an agent the reviewer's corrected read of the call, not the
-   model's unreviewed first pass.
+   A pdfmake document definition — real vector PDF content (tables, text,
+   colors), not HTML rasterized into an image and not a browser print. Two
+   things that follows from that: nothing to clip on the right edge (pdfmake
+   lays out and wraps text itself, the way the old html2canvas screenshot
+   never reliably did), and pdfMake.createPdf(...).download() saves the file
+   directly with no print dialog — the point of switching to this, so a
+   report can go straight from "Generate report" to an email attachment.
+   Only offered once a call has an actual manual grade on it
+   (score.is_overridden): the point is to hand an agent the reviewer's
+   corrected read of the call, not the model's unreviewed first pass.
    -------------------------------------------------------------------------- */
-function coachingReportHtml(rec, score) {
+function coachingReportDocDefinition(rec, score) {
   const eff = effectiveOf(score);
   const agentName = rec.agent?.full_name || rec.agent_name || 'Unknown agent';
   const dims = entriesOf(eff.dimensions);
@@ -1387,157 +1393,169 @@ function coachingReportHtml(rec, score) {
   const improvements = usingReviewerVersion ? score.manual_improvements : (Array.isArray(score.improvements) ? score.improvements : []);
   const toneColor = tone => ({
     good: '#1b8a5a', warning: '#b8860b', serious: '#d2691e', critical: '#c0392b',
-  }[tone] || '#666');
+  }[tone] || '#666666');
   const sevMeta = sev => FINDING_SEVERITIES.find(s => s.value === sev) || { label: sev, tone: 'warning' };
   // Same 0-69/70-79/80+ bands as the leaderboard's red/yellow/green legend.
-  const scoreBand = n => (n >= 80 ? 'good' : n >= 70 ? 'warn' : 'bad');
+  const bandColor = n => (n >= 80 ? '#146c46' : n >= 70 ? '#8a6508' : '#96281d');
+  const bandBg = n => (n >= 80 ? '#e8f7ee' : n >= 70 ? '#fff6e0' : '#fdeceb');
 
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>Coaching report - ${esc(agentName)} - ${esc(fmtDate(rec.call_on))}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;800&display=swap" rel="stylesheet">
-<style>
-  @page { size: letter; margin: 0.6in; }
-  * { box-sizing: border-box; }
-  body { font-family: -apple-system, Segoe UI, Arial, sans-serif; font-size: 12px; color: #1a1a1a; background: #fff; line-height: 1.5; overflow-wrap: break-word; }
-  .lana-header { display: flex; flex-direction: column; gap: 6px; margin-bottom: 24px; }
-  .lana-lockup { display: flex; align-items: center; gap: 8px; }
-  .lana-word { font-family: 'Manrope', -apple-system, Segoe UI, Arial, sans-serif; font-weight: 800; font-size: 22px; letter-spacing: -0.02em; color: #1E1029; }
-  .lana-l { color: #7C2FD6; }
-  .lana-tagline { font-family: 'Manrope', -apple-system, Segoe UI, Arial, sans-serif; font-size: 11px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: #8B7FA0; }
-  h1 { font-size: 22px; margin: 0 0 4px; }
-  h2 { font-size: 16px; margin: 28px 0 10px; border-bottom: 1px solid #ddd; padding-bottom: 6px; }
-  .muted { color: #666; font-size: 12px; }
-  .kpis { display: flex; gap: 16px; flex-wrap: wrap; margin: 16px 0; }
-  .kpi { border: 1px solid #ddd; border-radius: 8px; padding: 12px 16px; min-width: 140px; background: #f4f4f4; }
-  .kpi .lbl { font-size: 12px; color: #555; }
-  .kpi .val { font-size: 24px; font-weight: 700; color: #1a1a1a; }
-  .kpi--good { background: #e8f7ee; border-color: #1b8a5a; }
-  .kpi--good .val { color: #146c46; }
-  .kpi--warn { background: #fff6e0; border-color: #b8860b; }
-  .kpi--warn .val { color: #8a6508; }
-  .kpi--bad  { background: #fdeceb; border-color: #c0392b; }
-  .kpi--bad  .val { color: #96281d; }
-  table { width: 100%; table-layout: fixed; border-collapse: collapse; margin: 8px 0 20px; }
-  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e5e5e5; vertical-align: top; font-size: 12px; overflow-wrap: break-word; word-break: break-word; }
-  th { color: #666; font-weight: 600; font-size: 11px; text-transform: uppercase; }
-  /* Fixed layout needs explicit widths or it splits 3 columns evenly, starving
-     the long text column and forcing the short label columns wider than the
-     content needs — that's what let a long word push a column wider than the
-     page and run off the right edge. */
-  th:nth-child(1), td:nth-child(1) { width: 22%; }
-  th:nth-child(2), td:nth-child(2) { width: 14%; }
-  blockquote { margin: 6px 0 0; padding-left: 10px; border-left: 3px solid #ccc; font-size: 12px; color: #444; font-style: italic; overflow-wrap: break-word; word-break: break-word; }
-  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; color: #fff; font-size: 12px; font-weight: 600; }
-  ul { margin: 6px 0; padding-left: 20px; }
-  /* Keep a row/box/quote whole across a page boundary instead of splitting
-     it mid-line, which is what read as "bleeding" and illegible. */
-  tr, .kpi, blockquote, li { page-break-inside: avoid; break-inside: avoid; }
-  h2 { page-break-after: avoid; break-after: avoid; }
-</style>
-</head>
-<body>
-  <div class="lana-header">
-    <div class="lana-lockup">
-      <svg width="32" height="32" viewBox="0 0 32 32" role="img" aria-label="Lana">
-        <rect width="32" height="32" rx="7" fill="#3B1370"/>
-        <text x="16" y="17" text-anchor="middle" dominant-baseline="central"
-              font-family="Manrope, -apple-system, Segoe UI, Arial, sans-serif" font-weight="800" font-size="19" fill="#E4D4FF">L</text>
-      </svg>
-      <span class="lana-word"><span class="lana-l">L</span>ANA</span>
-    </div>
-    <div class="lana-tagline">AI Sales Coaching &amp; Scoring</div>
-  </div>
+  const infoLine = [
+    agentName,
+    fmtDate(rec.call_on),
+    rec.title || null,
+    rec.call_type ? (CALL_TYPES.find(t => t.value === rec.call_type)?.label || rec.call_type) : null,
+    rec.team?.name ? `Agency Assigned: ${rec.team.name}` : null,
+    rec.script?.name ? `Script: ${rec.script.name}` : null,
+  ].filter(Boolean).join('  ·  ');
 
-  <h1>Coaching report</h1>
-  <p class="muted">
-    ${esc(agentName)} - ${esc(fmtDate(rec.call_on))}${rec.title ? ` - ${esc(rec.title)}` : ''}
-    ${rec.call_type ? ` - ${esc(CALL_TYPES.find(t => t.value === rec.call_type)?.label || rec.call_type)}` : ''}
-    ${rec.team?.name ? ` - Agency Assigned: ${esc(rec.team.name)}` : ''}
-    ${rec.script?.name ? ` - Script: ${esc(rec.script.name)}` : ''}
-  </p>
-  <p class="muted">
-    Reviewed by ${esc(score.overridden_by_profile?.full_name || 'an admin')}
-    ${score.overridden_at ? `- ${esc(fmtDate(score.overridden_at))}` : ''}
-  </p>
+  const reviewedLine = `Reviewed by ${score.overridden_by_profile?.full_name || 'an admin'}` +
+    (score.overridden_at ? `  ·  ${fmtDate(score.overridden_at)}` : '');
 
-  <div class="kpis">
-    <div class="kpi kpi--${scoreBand(eff.overall_score)}">
-      <div class="lbl">Overall score</div>
-      <div class="val">${esc(eff.overall_score)}</div>
-      <div class="muted">Model originally scored ${esc(score.overall_score)}</div>
-    </div>
-    <div class="kpi kpi--${eff.compliance_passed ? 'good' : 'bad'}">
-      <div class="lbl">Compliance</div>
-      <div class="val">${eff.compliance_passed ? 'Pass' : 'Fail'}</div>
-      <div class="muted">Model originally said ${score.compliance_passed ? 'pass' : 'fail'}</div>
-    </div>
-  </div>
+  // Each KPI is its own single-cell borderless table so it can carry a
+  // background fill — pdfmake has no free-floating "card", a table cell is
+  // the only content node that takes a fillColor.
+  const kpiBox = (label, value, sub, color, bg) => ({
+    table: {
+      widths: ['*'],
+      body: [[{
+        stack: [
+          { text: label, fontSize: 9, color: '#555555' },
+          { text: String(value), fontSize: 22, bold: true, color, margin: [0, 3, 0, 3] },
+          { text: sub, fontSize: 8, color: '#666666' },
+        ],
+        fillColor: bg,
+        margin: [10, 8, 10, 8],
+      }]],
+    },
+    layout: 'noBorders',
+  });
 
-  ${score.is_overridden ? `
-  <h2>Summary of Call</h2>
-  <p>${esc(score.manual_summary || reviewerSummaryText(score))}</p>` : score.summary ? `
-  <h2>Call summary</h2>
-  <p>${esc(score.summary)}</p>` : ''}
+  const notesStack = (rationale, evidence, reason) => {
+    const stack = [{ text: rationale || '', fontSize: 8 }];
+    if (evidence) stack.push({ text: `"${evidence}"`, fontSize: 8, italics: true, color: '#444444', margin: [8, 3, 0, 0] });
+    if (reason) stack.push({ text: `Reviewer note: ${reason}`, fontSize: 8, color: '#666666', margin: [0, 3, 0, 0] });
+    return stack;
+  };
 
-  <h2>By dimension</h2>
-  <table>
-    <thead><tr><th>Dimension</th><th>Score</th><th>Notes</th></tr></thead>
-    <tbody>
-      ${dims.map(([key, v]) => {
-        const modelScore = Number(score.dimensions?.[key]?.score) || 0;
-        const n = Number(v.score) || 0;
-        return `<tr>
-          <td>${esc(dimLabel(key, v))}</td>
-          <td>${n}${n !== modelScore ? ` <span class="muted">(model said ${modelScore})</span>` : ''}</td>
-          <td>${esc(v.rationale || '')}
-            ${v.evidence ? `<blockquote>"${esc(v.evidence)}"</blockquote>` : ''}
-            ${v.reason ? `<div class="muted" style="margin-top:4px">Reviewer note: ${esc(v.reason)}</div>` : ''}
-          </td>
-        </tr>`;
-      }).join('')}
-    </tbody>
-  </table>
+  const tableHeader = text => ({ text, bold: true, fontSize: 8, color: '#666666' });
 
-  <h2>Compliance findings</h2>
-  ${findings.length === 0 ? '<p class="muted">No compliance issues found.</p>' : `
-  <table>
-    <thead><tr><th>Issue</th><th>Severity</th><th>Detail</th></tr></thead>
-    <tbody>
-      ${findings.map(f => {
-        const sev = sevMeta(f.severity);
-        return `<tr>
-          <td>${esc(FINDING_CODES[f.code] || f.code)}</td>
-          <td><span class="pill" style="background:${toneColor(sev.tone)}">${esc(sev.label)}</span></td>
-          <td>${esc(f.detail || '')}
-            ${f.evidence ? `<blockquote>"${esc(f.evidence)}"</blockquote>` : ''}
-            ${f.reason ? `<div class="muted" style="margin-top:4px">Reviewer note: ${esc(f.reason)}</div>` : ''}
-          </td>
-        </tr>`;
-      }).join('')}
-    </tbody>
-  </table>`}
+  const dimensionRows = dims.map(([key, v]) => {
+    const modelScore = Number(score.dimensions?.[key]?.score) || 0;
+    const n = Number(v.score) || 0;
+    return [
+      { text: dimLabel(key, v), fontSize: 9, bold: true },
+      { text: n !== modelScore ? `${n} (model said ${modelScore})` : String(n), fontSize: 9 },
+      { stack: notesStack(v.rationale, v.evidence, v.reason) },
+    ];
+  });
 
-  <h2>Coaching focus</h2>
-  <div style="display:flex;gap:24px;flex-wrap:wrap">
-    <div style="flex:1;min-width:240px">
-      <strong>What went well</strong>
-      ${strengths.length === 0 ? '<p class="muted">-</p>' : `<ul>${strengths.map(s => `<li>${esc(s)}</li>`).join('')}</ul>`}
-    </div>
-    <div style="flex:1;min-width:240px">
-      <strong>What to work on</strong>
-      ${improvements.length === 0 ? '<p class="muted">-</p>' : `<ul>${improvements.map(s => `<li>${esc(s)}</li>`).join('')}</ul>`}
-    </div>
-  </div>
+  const findingRows = findings.map(f => {
+    const sev = sevMeta(f.severity);
+    return [
+      { text: FINDING_CODES[f.code] || f.code, fontSize: 9 },
+      { text: sev.label, fontSize: 9, bold: true, color: toneColor(sev.tone) },
+      { stack: notesStack(f.detail, f.evidence, f.reason) },
+    ];
+  });
 
-  <p class="muted" style="margin-top:30px">
-    Generated ${esc(fmtDate(new Date().toISOString()))} - For coaching use, not a disciplinary or compliance record.
-  </p>
-</body>
-</html>`;
+  const content = [
+    { text: [{ text: 'L', color: '#7C2FD6' }, { text: 'ANA', color: '#1E1029' }], bold: true, fontSize: 20 },
+    { text: 'AI SALES COACHING & SCORING', fontSize: 8, bold: true, color: '#8B7FA0', characterSpacing: 1, margin: [0, 2, 0, 16] },
+
+    { text: 'Coaching report', fontSize: 18, bold: true, margin: [0, 0, 0, 4] },
+    { text: infoLine, fontSize: 9, color: '#666666', margin: [0, 0, 0, 2] },
+    { text: reviewedLine, fontSize: 9, color: '#666666', margin: [0, 0, 0, 14] },
+
+    {
+      columns: [
+        kpiBox('Overall score', eff.overall_score, `Model originally scored ${score.overall_score}`,
+          bandColor(eff.overall_score), bandBg(eff.overall_score)),
+        { width: 14, text: '' },
+        kpiBox('Compliance', eff.compliance_passed ? 'Pass' : 'Fail',
+          `Model originally said ${score.compliance_passed ? 'pass' : 'fail'}`,
+          eff.compliance_passed ? '#146c46' : '#96281d', eff.compliance_passed ? '#e8f7ee' : '#fdeceb'),
+      ],
+      margin: [0, 0, 0, 18],
+    },
+  ];
+
+  if (score.is_overridden) {
+    content.push({ text: 'Summary of Call', fontSize: 13, bold: true, margin: [0, 8, 0, 4] });
+    content.push({ text: score.manual_summary || reviewerSummaryText(score), fontSize: 9, margin: [0, 0, 0, 6] });
+  } else if (score.summary) {
+    content.push({ text: 'Call summary', fontSize: 13, bold: true, margin: [0, 8, 0, 4] });
+    content.push({ text: score.summary, fontSize: 9, margin: [0, 0, 0, 6] });
+  }
+
+  content.push({ text: 'By dimension', fontSize: 13, bold: true, margin: [0, 10, 0, 6] });
+  content.push({
+    table: {
+      widths: ['22%', '16%', '*'],
+      headerRows: 1,
+      body: [
+        [tableHeader('Dimension'), tableHeader('Score'), tableHeader('Notes')],
+        ...dimensionRows,
+      ],
+    },
+    layout: 'lightHorizontalLines',
+  });
+
+  content.push({ text: 'Compliance findings', fontSize: 13, bold: true, margin: [0, 14, 0, 6] });
+  if (findings.length === 0) {
+    content.push({ text: 'No compliance issues found.', fontSize: 9, color: '#666666' });
+  } else {
+    content.push({
+      table: {
+        widths: ['22%', '16%', '*'],
+        headerRows: 1,
+        body: [
+          [tableHeader('Issue'), tableHeader('Severity'), tableHeader('Detail')],
+          ...findingRows,
+        ],
+      },
+      layout: 'lightHorizontalLines',
+    });
+  }
+
+  content.push({ text: 'Coaching focus', fontSize: 13, bold: true, margin: [0, 14, 0, 6] });
+  content.push({
+    columns: [
+      {
+        width: '*',
+        stack: [
+          { text: 'What went well', bold: true, fontSize: 9, margin: [0, 0, 0, 4] },
+          strengths.length === 0
+            ? { text: '—', fontSize: 9, color: '#666666' }
+            : { ul: strengths.map(s => ({ text: s, fontSize: 9 })) },
+        ],
+      },
+      { width: 18, text: '' },
+      {
+        width: '*',
+        stack: [
+          { text: 'What to work on', bold: true, fontSize: 9, margin: [0, 0, 0, 4] },
+          improvements.length === 0
+            ? { text: '—', fontSize: 9, color: '#666666' }
+            : { ul: improvements.map(s => ({ text: s, fontSize: 9 })) },
+        ],
+      },
+    ],
+  });
+
+  content.push({
+    text: `Generated ${fmtDate(new Date().toISOString())}  ·  For coaching use, not a disciplinary or compliance record.`,
+    fontSize: 8,
+    color: '#666666',
+    margin: [0, 24, 0, 0],
+  });
+
+  return {
+    info: { title: `Coaching report - ${agentName} - ${fmtDate(rec.call_on)}` },
+    pageSize: 'LETTER',
+    pageMargins: [40, 40, 40, 40],
+    defaultStyle: { fontSize: 9 },
+    content,
+  };
 }
 
 /* === Calibration ==========================================================

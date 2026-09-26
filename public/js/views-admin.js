@@ -2,13 +2,13 @@
 // Admin portal: team management, all submissions, reporting.
 // Every view here assumes an admin profile; app.js gates the routes.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=54';
-import { STATUSES, ROLES } from './config.js?v=54';
+import * as db from './db.js?v=55';
+import { STATUSES, ROLES } from './config.js?v=55';
 import {
   esc, fmtMoney, fmtMoneyExact, fmtNum, fmtDate, range, RANGES, monthStart,
   toast, barRow, legend, empty, spinner, selectField,
-} from './ui.js?v=54';
-import { catLabel, SERIES } from './views-agent.js?v=54';
+} from './ui.js?v=55';
+import { catLabel, SERIES } from './views-agent.js?v=55';
 
 /* === Agents =============================================================== */
 // A temp password only has to clear Supabase's 8-char minimum and be easy to
