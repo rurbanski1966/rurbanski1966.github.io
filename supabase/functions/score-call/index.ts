@@ -173,9 +173,10 @@ Deno.serve(async req => {
   const recordingId = (body.recording_id ?? record?.id) as string | undefined;
   if (!recordingId) return json({ error: 'recording_id is required' }, 400);
 
-  const COLS = 'id, agent_id, transcript, status, title, call_on, duration_seconds, script_id';
+  const COLS = 'id, agent_id, transcript, status, title, call_on, duration_seconds, script_id, call_type';
   let rec: {
     id: string; agent_id: string; transcript: string | null; status: string; script_id: string | null;
+    call_type: string | null;
   } | null;
 
   if (isWebhook) {
@@ -274,6 +275,25 @@ Deno.serve(async req => {
         `\n\n<script name="${script!.name.replace(/"/g, "'")}">\n${script!.content.trim()}\n</script>`
       : '';
 
+    // Per-call metadata, like the transcript and script — goes in the user
+    // message, never the cached system block. Without this the model has to
+    // infer the product purely from what's said, which calibration showed is
+    // unreliable: Medicare-only criteria (doctor/prescription discovery,
+    // scope of appointment, network verification) were being applied to
+    // ancillary calls that have no such things, dragging every dimension down
+    // hard and inflating false compliance findings. An untagged call
+    // (call_type is null — not every recording has been categorized) gets no
+    // steer either way; the rubric's own product-type language is what
+    // handles that case.
+    const callTypeLine = rec.call_type === 'medicare'
+      ? `\n\nThis call is tagged as a Medicare Advantage / Part D product call.`
+      : rec.call_type === 'ancillary'
+      ? `\n\nThis call is tagged as an ancillary (non-Medicare) product call — e.g. final expense, ` +
+        `dental/vision/hearing, hospital indemnity, or critical illness. Do not apply Medicare-specific ` +
+        `criteria or compliance rules (provider/network checks, prescription discovery, scope of ` +
+        `appointment, the "not every plan" disclaimer) to this call — they do not apply to this product.`
+      : '';
+
     const anthropic = new Anthropic({ apiKey: Deno.env.get('ANTHROPIC_API_KEY')! });
 
     // Prompt cache layout. Render order is tools -> system -> messages, so the
@@ -305,6 +325,7 @@ Deno.serve(async req => {
           role: 'user',
           content:
             `Score this sales call.${truncated ? '\n\nNOTE: the transcript was truncated for length; score only what is present and say so in the summary.' : ''}` +
+            callTypeLine +
             scriptBlock +
             `\n\n<transcript>\n${transcript}\n</transcript>`,
         },
