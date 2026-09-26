@@ -113,31 +113,38 @@ Deno.serve(async req => {
     ((score.findings ?? []) as Finding[]).map(f => [f.code, f])
   );
 
-  const dimensionChanges = Object.entries(effDimensions)
-    .filter(([key, v]) => Number(v?.score) !== Number(modelDimensions[key]?.score ?? 0))
-    .map(([key, v]) => ({
+  // Every dimension the reviewer's effective grade covers, whether they
+  // changed its score from the model's or confirmed it as-is. A reviewer who
+  // looked at a call and agreed with the model on every point still has an
+  // opinion worth an agent hearing — "confirmed strong" and "confirmed weak"
+  // are both real feedback, not the absence of any.
+  const dimensionSummaries = Object.entries(effDimensions).map(([key, v]) => {
+    const modelScore = Number(modelDimensions[key]?.score ?? 0);
+    const afterScore = Number(v?.score ?? 0);
+    return {
       label: v?.label || key,
-      before: Number(modelDimensions[key]?.score ?? 0),
-      after: Number(v?.score ?? 0),
-      reason: v?.reason || null,
-    }));
+      score: afterScore,
+      changed_from_model: afterScore !== modelScore,
+      model_score: modelScore,
+      reviewer_reason: v?.reason || null,
+    };
+  });
 
-  const findingChanges = effFindings
-    .map(f => {
-      const before = f.code ? modelFindingByCode.get(f.code) : undefined;
-      if (!before || before.severity === f.severity) return null;
-      return {
-        detail: f.detail || f.code || 'finding',
-        before_severity: before.severity,
-        after_severity: f.severity,
-        reason: f.reason || null,
-      };
-    })
-    .filter((x): x is NonNullable<typeof x> => x !== null);
+  const findingSummaries = effFindings.map(f => {
+    const before = f.code ? modelFindingByCode.get(f.code) : undefined;
+    return {
+      detail: f.detail || f.code || 'finding',
+      severity: f.severity,
+      changed_from_model: !!before && before.severity !== f.severity,
+      model_severity: before?.severity ?? null,
+      reviewer_reason: f.reason || null,
+    };
+  });
 
-  if (dimensionChanges.length === 0 && findingChanges.length === 0 && !score.manual_notes) {
-    // Overridden in name only (e.g. reverted right back to the model's own
-    // numbers) — there is nothing the reviewer actually said to summarize.
+  if (dimensionSummaries.length === 0 && findingSummaries.length === 0 && !score.manual_notes) {
+    // The only real "nothing here" case — no dimensions, no findings, no
+    // notes at all to draw from (e.g. a call re-scored and marked reviewed
+    // before any per-dimension grade even exists yet).
     return json({
       summary: 'The reviewer confirmed this grade with no specific notes recorded.',
       strengths: [],
@@ -150,24 +157,28 @@ Deno.serve(async req => {
   const effCompliancePassed = score.is_overridden ? score.manual_compliance_passed : score.compliance_passed;
 
   const systemPrompt =
-    `You help a call-quality reviewer turn their own manual corrections to an AI-generated call grade ` +
-    `into a short coaching note for the agent. You are given exactly what the reviewer changed — score ` +
-    `deltas and the reviewer's own written reasons — plus any overall notes they added. Use ONLY this ` +
-    `information. Do not guess at what happened on the call itself, and do not add detail the reviewer ` +
-    `did not write. If the reviewer's own text is thin, keep your output thin rather than padding it.\n\n` +
+    `You help a call-quality reviewer turn their final grade on an AI-scored call into a short coaching ` +
+    `note for the agent. You are given the reviewer's final (effective) score for every dimension and ` +
+    `finding — each one flagged as either changed from the model's own score or confirmed as-is — plus ` +
+    `any reasons the reviewer wrote and any overall notes. A dimension the reviewer confirmed (didn't ` +
+    `change) is still their real judgment of that dimension, not something to skip: a confirmed high ` +
+    `score is a genuine strength, a confirmed low score is a genuine area to improve. Use ONLY this ` +
+    `information — do not guess at what happened on the call itself, and do not invent detail beyond ` +
+    `what the reviewer's final scores and reasons support. If the reviewer wrote little, keep your ` +
+    `output thin rather than padding it.\n\n` +
     `Write:\n` +
     `- summary: 4-5 sentences a manager could hand directly to the agent — the overall outcome, what ` +
     `went well, and what to work on.\n` +
-    `- strengths: short bullet points, only for things the reviewer's changes indicate the agent did ` +
-    `well (the reviewer scored it better than the model did).\n` +
-    `- improvements: short bullet points, only for things the reviewer's changes indicate need work ` +
-    `(the reviewer scored it worse than the model did).`;
+    `- strengths: short bullet points for whichever dimensions rate well in the reviewer's final grade ` +
+    `(changed upward or confirmed high), especially any the reviewer explicitly praised.\n` +
+    `- improvements: short bullet points for whichever dimensions rate poorly in the reviewer's final ` +
+    `grade (changed downward or confirmed low), or any compliance finding still present in it.`;
 
   const userContent = JSON.stringify({
     overall_score: effOverallScore,
     compliance_passed: effCompliancePassed,
-    dimension_changes: dimensionChanges,
-    finding_changes: findingChanges,
+    dimensions: dimensionSummaries,
+    findings: findingSummaries,
     reviewer_notes: score.manual_notes || null,
   }, null, 2);
 
