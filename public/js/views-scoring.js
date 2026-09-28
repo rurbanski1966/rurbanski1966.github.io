@@ -5,12 +5,12 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=56';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES } from './config.js?v=56';
+import * as db from './db.js?v=57';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES } from './config.js?v=57';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
   toast, statTile, barRow, empty, spinner, selectField, loadPdfMake,
-} from './ui.js?v=56';
+} from './ui.js?v=57';
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -179,6 +179,8 @@ function matchQuoteToTurn(quote, turns) {
   const runnerUp = Math.max(0, ...scores.filter((_, i) => i !== best));
   return scores[best] >= 0.8 && scores[best] - runnerUp >= 0.25 ? best : -1;
 }
+
+const REVIEWS_FILTER_KEY = 'lana-reviews-agent-filter';
 
 // The latest call_scores row for a recording, effective-score resolved —
 // the same "latest by created_at, override wins" logic call_scores_effective
@@ -400,9 +402,21 @@ export async function reviews(main, ctx) {
     : [];
 
   if (isAdmin) {
+    // Persisted per tab (not per page load) so opening a call and hitting
+    // Back doesn't force re-picking the same agent — reviews() re-runs from
+    // scratch on every navigation to #/reviews, there's no component state
+    // to carry across that. Falls back to "All calls" if the remembered
+    // value no longer matches anyone in today's list (e.g. the only label
+    // under that name got renamed or deleted).
+    const storedFilter = sessionStorage.getItem(REVIEWS_FILTER_KEY) || '';
+    const initialFilter = filterOptions.some(o => o.value === storedFilter) ? storedFilter : '';
+
     document.querySelector('#list').insertAdjacentHTML('beforebegin', `
-      <div class="filters">${selectField('agent-filter', 'Agent', filterOptions, '')}</div>`);
-    document.getElementById('agent-filter').addEventListener('change', () => draw());
+      <div class="filters">${selectField('agent-filter', 'Agent', filterOptions, initialFilter)}</div>`);
+    document.getElementById('agent-filter').addEventListener('change', e => {
+      sessionStorage.setItem(REVIEWS_FILTER_KEY, e.target.value);
+      draw();
+    });
   }
 
   async function draw() {
