@@ -5,12 +5,12 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=55';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES } from './config.js?v=55';
+import * as db from './db.js?v=56';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES } from './config.js?v=56';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
   toast, statTile, barRow, empty, spinner, selectField, loadPdfMake,
-} from './ui.js?v=55';
+} from './ui.js?v=56';
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -178,6 +178,18 @@ function matchQuoteToTurn(quote, turns) {
   const best = scores.reduce((b, s, i) => (s > scores[b] ? i : b), 0);
   const runnerUp = Math.max(0, ...scores.filter((_, i) => i !== best));
   return scores[best] >= 0.8 && scores[best] - runnerUp >= 0.25 ? best : -1;
+}
+
+// The latest call_scores row for a recording, effective-score resolved —
+// the same "latest by created_at, override wins" logic call_scores_effective
+// applies server-side (migration 007/031), done client-side here since the
+// list embeds every score row a recording has ever had rather than a single
+// pre-resolved column.
+function effectiveScoreFor(rec) {
+  const scores = rec.call_scores;
+  if (!Array.isArray(scores) || scores.length === 0) return null;
+  const latest = scores.reduce((a, b) => (new Date(b.created_at) > new Date(a.created_at) ? b : a));
+  return latest.is_overridden ? latest.manual_overall_score : latest.overall_score;
 }
 
 /* === Review list ========================================================== */
@@ -415,7 +427,7 @@ export async function reviews(main, ctx) {
       </div>
       <div class="tablewrap"><table>
         <thead><tr>
-          <th>Date</th><th>Call</th><th>Agent</th><th>Length</th><th>Status</th><th>Reviewer status</th><th></th>
+          <th>Date</th><th>Call</th><th>Agent</th><th class="num">Score</th><th>Length</th><th>Status</th><th>Reviewer status</th><th></th>
         </tr></thead>
         <tbody>${rows.map(r => {
           // Mirrors RLS: an admin can touch any row; anyone else only their
@@ -424,12 +436,14 @@ export async function reviews(main, ctx) {
           // fails against a rule the button should have hidden for.
           const canEdit = isAdmin || (r.uploaded_by === ctx.profile.id && ['uploaded', 'transcribed', 'failed'].includes(r.status));
           const canDelete = isAdmin || r.uploaded_by === ctx.profile.id;
+          const score = effectiveScoreFor(r);
           return `
           <tr data-id="${esc(r.id)}">
             <td class="tnum">${esc(fmtDate(r.call_on))}</td>
             <td>${esc(r.title || 'Untitled call')}${r.error_message
               ? `<br><span class="muted">${esc(r.error_message.slice(0, 80))}</span>` : ''}</td>
             <td>${esc(r.agent?.full_name || r.agent_name || '—')}${r.team?.name ? `<br><span class="muted">${esc(r.team.name)}</span>` : ''}</td>
+            <td class="num tnum">${score != null ? esc(score) : '—'}</td>
             <td class="tnum muted">${esc(fmtDuration(r.duration_seconds))}</td>
             <td>${statusChipFor(r.status)}</td>
             <td>${reviewerStatusChip(r.reviewer_approved)}</td>
