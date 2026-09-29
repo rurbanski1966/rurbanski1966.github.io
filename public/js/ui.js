@@ -2,7 +2,7 @@
 // Rendering helpers: formatting, date ranges, and the small set of chart
 // primitives the dashboard needs (stat tile, meter, bar row).
 // ---------------------------------------------------------------------------
-import { TIMEZONE, STATUSES, APPT_STATUSES } from './config.js?v=57';
+import { TIMEZONE, STATUSES, APPT_STATUSES } from './config.js?v=58';
 
 /* --- escaping ------------------------------------------------------------ */
 // Every value that reaches innerHTML goes through this. Client names and notes
@@ -302,6 +302,39 @@ export function loadPdfMake() {
     document.head.appendChild(core);
   });
   return pdfMakeReady;
+}
+
+/* --- zip bundling ----------------------------------------------------------
+   The coaching report is bundled with the call's own audio file into one
+   .zip so a manager has both in a single email attachment. JSZip runs
+   entirely client-side (no server round trip) and, like pdfMake, exposes a
+   global once loaded.
+   -------------------------------------------------------------------------- */
+let jsZipReady = null;
+export function loadJSZip() {
+  if (window.JSZip) return Promise.resolve();
+  if (jsZipReady) return jsZipReady;
+  jsZipReady = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+    script.onload = () => resolve();
+    script.onerror = () => { jsZipReady = null; reject(new Error('Could not load the zip library — check your connection and try again.')); };
+    document.head.appendChild(script);
+  });
+  return jsZipReady;
+}
+
+// Same no-dialog download pattern as pdfMake's own .download(): an
+// object URL plus a synthetic <a click>, immediately revoked.
+export function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 // Status chips carry an icon and a word, so state never rides on color alone.

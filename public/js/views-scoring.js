@@ -5,12 +5,12 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=57';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES } from './config.js?v=57';
+import * as db from './db.js?v=58';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES } from './config.js?v=58';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
-  toast, statTile, barRow, empty, spinner, selectField, loadPdfMake,
-} from './ui.js?v=57';
+  toast, statTile, barRow, empty, spinner, selectField, loadPdfMake, loadJSZip, downloadBlob,
+} from './ui.js?v=58';
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -721,8 +721,34 @@ export async function reviewDetail(main, ctx, recordingId) {
         await loadPdfMake();
         const agentSlug = (rec.agent?.full_name || rec.agent_name || 'agent')
           .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-        window.pdfMake.createPdf(coachingReportDocDefinition(rec, score))
-          .download(`coaching-report-${agentSlug}-${rec.call_on}.pdf`);
+        const baseName = `coaching-report-${agentSlug}-${rec.call_on}`;
+        const pdfBlob = await new Promise((resolve, reject) => {
+          try {
+            window.pdfMake.createPdf(coachingReportDocDefinition(rec, score)).getBlob(resolve);
+          } catch (err) { reject(err); }
+        });
+
+        if (!rec.storage_path) {
+          // No audio on this call (transcript-only entry) — nothing to zip
+          // with, so fall back to just the PDF.
+          downloadBlob(pdfBlob, `${baseName}.pdf`);
+          toast('No audio file on this call — downloaded the report alone.', 'ok');
+        } else {
+          btn.textContent = 'Bundling audio…';
+          const [audioBlob] = await Promise.all([
+            db.audioUrl(rec.storage_path).then(url => fetch(url)).then(res => {
+              if (!res.ok) throw new Error(`Could not download the call recording (${res.status}).`);
+              return res.blob();
+            }),
+            loadJSZip(),
+          ]);
+          const ext = (rec.storage_path.split('.').pop() || 'mp3').toLowerCase();
+          const zip = new window.JSZip();
+          zip.file(`${baseName}.pdf`, pdfBlob);
+          zip.file(`${baseName}.${ext}`, audioBlob);
+          const zipBlob = await zip.generateAsync({ type: 'blob' });
+          downloadBlob(zipBlob, `${baseName}.zip`);
+        }
       } catch (err) {
         toast(err.message || 'Could not generate the PDF.', 'error');
       } finally {
