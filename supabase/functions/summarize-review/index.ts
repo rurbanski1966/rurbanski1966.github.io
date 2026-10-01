@@ -164,15 +164,21 @@ Deno.serve(async req => {
     `change) is still their real judgment of that dimension, not something to skip: a confirmed high ` +
     `score is a genuine strength, a confirmed low score is a genuine area to improve. Use ONLY this ` +
     `information — do not guess at what happened on the call itself, and do not invent detail beyond ` +
-    `what the reviewer's final scores and reasons support. If the reviewer wrote little, keep your ` +
-    `output thin rather than padding it.\n\n` +
+    `what the reviewer's final scores and reasons support.\n\n` +
+    `"Keep it thin" means fewer or shorter bullets when the reviewer wrote little — it never means an ` +
+    `empty strengths or improvements array. Every dimension score given to you is itself reviewer ` +
+    `signal, with or without a written reason, so strengths and improvements must ALWAYS have at least ` +
+    `one bullet each: if nothing else distinguishes the call, fall back to its best-scoring dimension as ` +
+    `a strength and its worst-scoring dimension as something to work on, named plainly (e.g. "Closing ` +
+    `scored 82 — a consistent strength" / "Objection handling scored 61 — the clearest place to improve"). ` +
+    `Submitting either array empty is always wrong.\n\n` +
     `Write:\n` +
     `- summary: 4-5 sentences a manager could hand directly to the agent — the overall outcome, what ` +
     `went well, and what to work on.\n` +
     `- strengths: short bullet points for whichever dimensions rate well in the reviewer's final grade ` +
-    `(changed upward or confirmed high), especially any the reviewer explicitly praised.\n` +
+    `(changed upward or confirmed high), especially any the reviewer explicitly praised. Never empty.\n` +
     `- improvements: short bullet points for whichever dimensions rate poorly in the reviewer's final ` +
-    `grade (changed downward or confirmed low), or any compliance finding still present in it.`;
+    `grade (changed downward or confirmed low), or any compliance finding still present in it. Never empty.`;
 
   const userContent = JSON.stringify({
     overall_score: effOverallScore,
@@ -218,8 +224,23 @@ Deno.serve(async req => {
         (message.usage.output_tokens ?? 0) * price.output) / 1_000_000;
 
     const summary = String(parsed.summary ?? '').trim();
-    const strengths = Array.isArray(parsed.strengths) ? parsed.strengths : [];
-    const improvements = Array.isArray(parsed.improvements) ? parsed.improvements : [];
+    let strengths = Array.isArray(parsed.strengths) ? parsed.strengths : [];
+    let improvements = Array.isArray(parsed.improvements) ? parsed.improvements : [];
+
+    // Belt-and-suspenders: the prompt tells the model never to submit either
+    // array empty, but if it does anyway, fall back to the best/worst scoring
+    // dimension rather than let the report show nothing at all.
+    if (dimensionSummaries.length > 0) {
+      const byScore = [...dimensionSummaries].sort((a, b) => b.score - a.score);
+      if (strengths.length === 0) {
+        const best = byScore[0];
+        strengths = [`${best.label} scored ${best.score} — a consistent strength.`];
+      }
+      if (improvements.length === 0) {
+        const worst = byScore[byScore.length - 1];
+        improvements = [`${worst.label} scored ${worst.score} — the clearest place to improve.`];
+      }
+    }
 
     const serviceClient = createClient(supabaseUrl, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
     const { error: writeError } = await serviceClient
