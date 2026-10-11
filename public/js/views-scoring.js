@@ -5,12 +5,12 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=58';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES } from './config.js?v=58';
+import * as db from './db.js?v=59';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES } from './config.js?v=59';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
   toast, statTile, barRow, empty, spinner, selectField, loadPdfMake, loadJSZip, downloadBlob,
-} from './ui.js?v=58';
+} from './ui.js?v=59';
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -656,6 +656,7 @@ export async function reviewDetail(main, ctx, recordingId) {
       <div id="dimensions-area">${score ? spinner() : ''}</div>
       <div id="findings-area">${score ? spinner() : ''}</div>
       <div id="score-footer">${score ? scoreFooterHtml(score) : ''}</div>
+      <div id="scorecard-area"></div>
 
       ${rec.transcript ? `
         <div class="card">
@@ -764,6 +765,7 @@ export async function reviewDetail(main, ctx, recordingId) {
     if (score && ctx.profile.role === 'admin') drawOverride(score, draw);
     if (score) drawDimensions(score, ctx, turns, draw);
     if (score) drawFindings(score, ctx, turns, draw);
+    if (rec.transcript) drawScorecard(rec, ctx, turns);
 
     document.getElementById('reviewer-toggle')?.addEventListener('click', async e => {
       const btn = e.currentTarget;
@@ -849,6 +851,7 @@ export async function reviewDetail(main, ctx, recordingId) {
     // instead of higher up avoids piling up a duplicate listener each time.
     document.getElementById('dimensions-area')?.addEventListener('click', onQuoteClick);
     document.getElementById('findings-area')?.addEventListener('click', onQuoteClick);
+    document.getElementById('scorecard-area')?.addEventListener('click', onQuoteClick);
 
     document.getElementById('transcribe')?.addEventListener('click', async e => {
       e.target.disabled = true;
@@ -908,6 +911,413 @@ export async function reviewDetail(main, ctx, recordingId) {
   }
 
   await draw();
+}
+
+/* --- scorecard: pass/fail checklist with per-item regrade -------------------
+   A second instrument beside the rubric score above (migration 035). The
+   model grades every scorecard item pass / fail / N/A with a reason and the
+   quotes that decided it, and flags the ones a person should look at. An
+   admin can flip any item; the points recompute here from the verdicts and
+   the scorecard's own point values.
+
+   The model's grade is never edited. A regrade is saved to manual_items on
+   the same row the moment it is made — there is no Save button to forget —
+   and the model's score stays on screen next to the reviewed one so it is
+   always clear what a person changed.
+
+   Self-contained and failure-tolerant on purpose: if migration 035 hasn't
+   been run, or the lookup fails, this section stays empty rather than
+   taking the rest of the call page down with it.
+   -------------------------------------------------------------------------- */
+const SC_VERDICTS = [['pass', 'Pass'], ['fail', 'Fail'], ['na', 'N/A']];
+const scVerdictLabel = v => SC_VERDICTS.find(([key]) => key === v)?.[1] ?? v;
+const scVerdictChip = (v, prefix = '') => {
+  const tone = v === 'pass' ? 'good' : v === 'fail' ? 'critical' : null;
+  return `<span class="chip${tone ? ` chip--${tone}` : ' muted'}">${esc(prefix + scVerdictLabel(v))}</span>`;
+};
+
+// N/A items leave both numbers. Same rule as score-scorecard/index.ts — keep
+// the two in step.
+function scorecardTally(items, verdictOf) {
+  let earned = 0;
+  let possible = 0;
+  for (const item of items) {
+    const v = verdictOf(item.id);
+    if (v === 'na') continue;
+    possible += item.points;
+    if (v === 'pass') earned += item.points;
+  }
+  return { earned, possible, percent: possible ? Math.round(1000 * earned / possible) / 10 : null };
+}
+const scTallyText = t => t.possible ? `${t.earned}/${t.possible} · ${t.percent}%` : 'Nothing applicable';
+
+// "Detailed call rubric report": the whole scorecard for one graded call in a
+// single read — what each item requires, the verdict it got, and the points
+// that verdict earned, subtotalled by section. Read-only; it shows the same
+// final verdicts as the card behind it, so a reviewer's regrade is reflected
+// and labelled rather than hidden.
+function openScorecardReport({ rec, card, sections, allItems, aiOf, finalOf, changed, noteOf, isAdmin }) {
+  document.getElementById('sc-report')?.remove();
+
+  const pts = n => `${fmtNum(n)} pt${n === 1 ? '' : 's'}`;
+  const total = scorecardTally(allItems, finalOf);
+  const fullPoints = card.definition.total_points ?? allItems.reduce((n, i) => n + i.points, 0);
+  const naItems = allItems.filter(i => finalOf(i.id) === 'na');
+  const naPoints = naItems.reduce((n, i) => n + i.points, 0);
+
+  const rows = sections.map(s => {
+    const tally = scorecardTally(s.items, finalOf);
+    const available = s.items.reduce((n, i) => n + i.points, 0);
+    return { section: s, tally, available, na: available - tally.possible };
+  });
+
+  const itemHtml = item => {
+    const ai = aiOf(item.id);
+    const final = finalOf(item.id);
+    const earned = final === 'pass' ? item.points : 0;
+    const note = noteOf(item.id);
+    return `
+      <div class="sc-item sc-item--${esc(final)}">
+        <div class="sc-item__head">
+          <div><strong>${esc(item.id)}</strong> ${esc(item.question)}</div>
+          <strong class="sc-report__pts">${final === 'na' ? 'N/A' : `${fmtNum(earned)} / ${fmtNum(item.points)}`}</strong>
+        </div>
+        <div class="sc-item__meta">
+          ${scVerdictChip(final)}
+          <span class="muted">${esc(item.weight)} · worth ${esc(pts(item.points))}${final === 'na' ? ' · not counted' : ''}</span>
+          ${changed(item.id) ? `<span class="chip chip--warning">Changed by reviewer${isAdmin ? ` · AI said ${esc(scVerdictLabel(ai.verdict))}` : ''}</span>` : ''}
+        </div>
+        <div class="sc-report__label">What earns the points</div>
+        <p class="sc-report__text">${esc(item.context)}</p>
+        ${item.example ? `<p class="sc-report__text muted"><em>Example:</em> ${esc(item.example)}</p>` : ''}
+        <div class="sc-report__label">How this call was graded</div>
+        <p class="sc-report__text">${esc(ai.reason || 'No explanation was recorded.')}</p>
+        ${ai.checkpoints?.length ? `
+          <ul class="sc-checks">${ai.checkpoints.map(c => `<li data-status="${esc(c.status)}">${esc(c.name)}</li>`).join('')}</ul>` : ''}
+        ${(ai.evidence ?? []).map(q => `<blockquote class="sc-report__quote">${esc(q)}</blockquote>`).join('')}
+        ${note ? `<p class="sc-report__text muted">Reviewer note: ${esc(note)}</p>` : ''}
+      </div>`;
+  };
+
+  const dialog = document.createElement('dialog');
+  dialog.id = 'sc-report';
+  dialog.className = 'sc-report';
+  dialog.setAttribute('aria-labelledby', 'sc-report-title');
+  dialog.innerHTML = `
+    <div class="sc-report__bar">
+      <h2 id="sc-report-title">Detailed call rubric report</h2>
+      <button class="btn btn--ghost btn--sm" type="button" data-close>Close</button>
+    </div>
+    <div class="sc-report__body">
+      <p class="muted" style="margin:0 0 16px">
+        ${esc(rec.title || 'Untitled call')} · ${esc(fmtDate(rec.call_on))} · ${esc(rec.agent?.full_name || rec.agent_name || '—')}
+        · ${esc(card.name)}, version ${esc(card.version)}
+      </p>
+      <div class="field">
+        <span class="muted">Total score</span>
+        <strong style="font-size:26px">${total.possible ? `${fmtNum(total.earned)} of ${fmtNum(total.possible)} points · ${total.percent}%` : 'Nothing applicable'}</strong>
+        <span class="muted" style="font-size:13px;display:block">
+          The scorecard totals ${esc(pts(fullPoints))}.
+          ${naItems.length
+            ? `${fmtNum(naItems.length)} item${naItems.length === 1 ? '' : 's'} worth ${esc(pts(naPoints))} did not apply to this call and ${naItems.length === 1 ? 'is' : 'are'} left out of the score.`
+            : 'Every item applied to this call.'}
+        </span>
+      </div>
+
+      <h3 class="sc-report__h">Points by section</h3>
+      <div class="tablewrap"><table>
+        <thead><tr>
+          <th>Section</th><th class="num">Points available</th><th class="num">N/A</th><th class="num">Points scored</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map(r => `
+            <tr>
+              <td><a href="#sc-report-s${esc(r.section.section_number)}" data-jump="sc-report-s${esc(r.section.section_number)}">${esc(r.section.section_number)}. ${esc(r.section.section_name)}</a></td>
+              <td class="num">${fmtNum(r.available)}</td>
+              <td class="num">${r.na ? fmtNum(r.na) : '—'}</td>
+              <td class="num"><strong>${r.tally.possible ? `${fmtNum(r.tally.earned)} / ${fmtNum(r.tally.possible)}` : 'N/A'}</strong></td>
+            </tr>`).join('')}
+          <tr>
+            <td><strong>Total</strong></td>
+            <td class="num"><strong>${fmtNum(fullPoints)}</strong></td>
+            <td class="num"><strong>${naPoints ? fmtNum(naPoints) : '—'}</strong></td>
+            <td class="num"><strong>${total.possible ? `${fmtNum(total.earned)} / ${fmtNum(total.possible)}` : 'N/A'}</strong></td>
+          </tr>
+        </tbody>
+      </table></div>
+
+      ${rows.map(r => `
+        <div class="sc-section" id="sc-report-s${esc(r.section.section_number)}">
+          <div class="sc-section__head">
+            <strong>${esc(r.section.section_number)}. ${esc(r.section.section_name)}</strong>
+            <span>${r.tally.possible
+              ? `Scored ${fmtNum(r.tally.earned)} of ${esc(pts(r.tally.possible))}${r.na ? ` · ${esc(pts(r.na))} N/A` : ''}`
+              : `N/A · ${esc(pts(r.available))} not counted`}</span>
+          </div>
+          ${r.section.items.map(itemHtml).join('')}
+        </div>`).join('')}
+    </div>`;
+
+  dialog.addEventListener('click', e => {
+    // A click on the dialog element itself is a click on the backdrop.
+    if (e.target === dialog || e.target.closest('[data-close]')) return dialog.close();
+    const jump = e.target.closest('[data-jump]');
+    if (jump) {
+      // The app's router owns the hash, so scroll instead of navigating.
+      e.preventDefault();
+      dialog.querySelector(`#${CSS.escape(jump.dataset.jump)}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  });
+  dialog.addEventListener('close', () => dialog.remove());
+  document.body.appendChild(dialog);
+  dialog.showModal();
+}
+
+async function drawScorecard(rec, ctx, turns) {
+  const host = document.getElementById('scorecard-area');
+  if (!host) return;
+  const isAdmin = ctx.profile.role === 'admin';
+
+  let grade;
+  let card;
+  try {
+    grade = await db.scorecardForRecording(rec.id);
+    card = grade?.scorecard ?? await db.activeScorecard();
+  } catch {
+    return;
+  }
+  if (!card) return;
+
+  const sections = card.definition.sections;
+  const allItems = sections.flatMap(s => s.items);
+  const forScripts = card.definition.applies_to_scripts ?? [];
+  const scriptNote = forScripts.length && !forScripts.includes(rec.script?.name)
+    ? `<p class="muted" style="margin:0 0 14px;font-size:13px">This scorecard is written for calls on ${esc(forScripts.join(' or '))}. This call ${rec.script?.name ? `is on ${esc(rec.script.name)}` : 'has no script set'}.</p>`
+    : '';
+
+  async function runGrade(btn) {
+    btn.disabled = true;
+    btn.textContent = 'Grading… about a minute';
+    try {
+      const result = await db.gradeScorecard(rec.id);
+      toast(`Graded. Cost ${fmtMoneyExact(result?.cost_usd ?? 0)}.`, 'ok');
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+    drawScorecard(rec, ctx, turns);
+  }
+
+  if (!grade) {
+    host.innerHTML = `
+      <div class="card">
+        <div class="card__head"><h2>${esc(card.name)}</h2><span class="muted">Not graded yet</span></div>
+        ${scriptNote}
+        <p class="muted" style="margin:0 0 14px">
+          ${fmtNum(allItems.length)} pass/fail items worth ${fmtNum(card.definition.total_points)} points,
+          graded one by one with the transcript lines that decided each.
+        </p>
+        <button class="btn btn--primary" id="sc-grade" type="button">Grade against scorecard</button>
+      </div>`;
+    host.onclick = e => { if (e.target.id === 'sc-grade') runGrade(e.target); };
+    host.onchange = null;
+    return;
+  }
+
+  const aiById = new Map(grade.items.map(i => [i.id, i]));
+  const blank = { verdict: 'na', confidence: 'low', reason: '', evidence: [], checkpoints: [], needs_review: true, review_reason: 'Not graded.' };
+  const aiOf = id => aiById.get(id) ?? blank;
+
+  // { item id: { verdict, note, checked } } — only items a reviewer touched.
+  const manual = structuredClone(grade.manual_items ?? {});
+  const finalOf = id => manual[id]?.verdict ?? aiOf(id).verdict;
+  const changed = id => finalOf(id) !== aiOf(id).verdict;
+  const pending = id => aiOf(id).needs_review && !manual[id]?.checked && !changed(id);
+
+  const FILTERS = [
+    ['all', 'All', () => true],
+    ['review', 'Needs review', pending],
+    ['fail', 'Failed', id => finalOf(id) === 'fail'],
+    ['na', 'N/A', id => finalOf(id) === 'na'],
+    ['changed', 'Changed', changed],
+  ];
+  let filter = 'all';
+
+  // Saves are chained so two quick clicks can't land out of order and leave
+  // the older state as the stored one.
+  let saving = Promise.resolve();
+  function save() {
+    const snapshot = structuredClone(manual);
+    const totals = scorecardTally(allItems, finalOf);
+    saving = saving
+      .then(() => db.saveScorecardReview(grade.id, snapshot, totals))
+      .catch(err => toast(`Could not save that change: ${err.message}`, 'error'));
+  }
+
+  function itemHtml(item) {
+    const ai = aiOf(item.id);
+    const final = finalOf(item.id);
+    const note = manual[item.id]?.note ?? '';
+    return `
+      <div class="sc-item sc-item--${esc(final)}">
+        <div class="sc-item__head">
+          <div>
+            <strong>${esc(item.id)}</strong> ${esc(item.question)}
+            <div class="sc-item__meta">
+              ${isAdmin ? scVerdictChip(ai.verdict, 'AI: ') : scVerdictChip(final)}
+              <span class="muted">${esc(item.weight)} · ${esc(item.points)} pt${item.points === 1 ? '' : 's'}${isAdmin ? ` · ${esc(ai.confidence)} confidence` : ''}</span>
+              ${changed(item.id) ? `<span class="chip chip--warning">Changed by reviewer</span>` : ''}
+              ${isAdmin && pending(item.id) ? `<span class="chip chip--warning"><span aria-hidden="true">!</span>Needs review</span>` : ''}
+            </div>
+          </div>
+          ${isAdmin ? `
+            <div class="sc-verdict" role="group" aria-label="Grade for ${esc(item.id)}">
+              ${SC_VERDICTS.map(([v, label]) => `
+                <button type="button" data-item="${esc(item.id)}" data-verdict="${v}" aria-pressed="${final === v}">${label}</button>`).join('')}
+            </div>` : ''}
+        </div>
+        <div class="muted" style="margin:8px 0">${esc(ai.reason)}</div>
+        ${isAdmin && ai.needs_review && ai.review_reason ? `
+          <div class="sc-flag">
+            Flagged: ${esc(ai.review_reason)}
+            ${pending(item.id) ? `<button class="btn btn--ghost btn--sm" type="button" data-confirm="${esc(item.id)}" style="margin-left:8px">AI grade is right</button>` : ''}
+          </div>` : ''}
+        ${ai.checkpoints?.length ? `
+          <ul class="sc-checks">${ai.checkpoints.map(c => `<li data-status="${esc(c.status)}">${esc(c.name)}</li>`).join('')}</ul>` : ''}
+        <div style="display:flex;flex-direction:column;gap:6px">
+          ${(ai.evidence ?? []).map(q => evidenceHtml(q, turns)).join('')}
+        </div>
+        <details>
+          <summary>Scorecard guidance</summary>
+          <p>${esc(item.context)}</p>
+          ${item.example ? `<p><em>Example:</em> ${esc(item.example)}</p>` : ''}
+        </details>
+        ${isAdmin
+          ? `<textarea class="sc-note" data-note="${esc(item.id)}" placeholder="Reviewer note" aria-label="Reviewer note for ${esc(item.id)}">${esc(note)}</textarea>`
+          : note ? `<div class="muted" style="font-size:12px;margin-top:6px">Reviewer note: ${esc(note)}</div>` : ''}
+      </div>`;
+  }
+
+  function render() {
+    const final = scorecardTally(allItems, finalOf);
+    const reviewed = Object.keys(manual).length > 0;
+    const left = allItems.filter(i => pending(i.id)).length;
+    const test = FILTERS.find(([key]) => key === filter)[2];
+    const shown = sections
+      .map(s => ({ section: s, items: s.items.filter(i => test(i.id)) }))
+      .filter(x => x.items.length);
+
+    host.innerHTML = `
+      <div class="card">
+        <div class="card__head">
+          <h2>${esc(card.name)}</h2>
+          ${reviewed
+            ? `<span class="chip chip--good"><span aria-hidden="true">✓</span>Reviewed${grade.reviewer?.full_name ? ` by ${esc(grade.reviewer.full_name)}` : ''}</span>`
+            : `<span class="muted">As graded by the model</span>`}
+        </div>
+        ${scriptNote}
+        ${grade.alerts?.length ? `
+          <div style="border-left:3px solid var(--critical);padding:4px 0 4px 12px;margin-bottom:16px">
+            <strong>Compliance alerts</strong>
+            <ul style="margin:4px 0 0;padding-left:18px">${grade.alerts.map(a => `<li>${esc(a)}</li>`).join('')}</ul>
+          </div>` : ''}
+        <div class="grid-2">
+          <div class="field">
+            <span class="muted">${reviewed ? 'Reviewed score' : 'Score'}</span>
+            <strong style="font-size:22px">${esc(scTallyText(final))}</strong>
+            ${reviewed ? `<span class="muted" style="font-size:12px;display:block">Model graded ${esc(scTallyText({ earned: grade.earned, possible: grade.possible, percent: Number(grade.percent) }))}</span>` : ''}
+          </div>
+          ${isAdmin ? `
+            <div class="field">
+              <span class="muted">Still to check</span>
+              <strong style="font-size:22px">${fmtNum(left)}</strong>
+              <span class="muted" style="font-size:12px;display:block">of ${fmtNum(allItems.filter(i => aiOf(i.id).needs_review).length)} the model flagged</span>
+            </div>` : ''}
+        </div>
+        <button class="btn btn--primary" type="button" id="sc-report-open" style="margin-bottom:14px">Detailed call rubric report</button>
+        <p class="muted" style="margin:0;font-size:13px">
+          N/A items are left out of the score. Version ${esc(grade.scorecard_version)} ·
+          graded ${esc(fmtDate(grade.created_at))}${isAdmin && grade.cost_usd != null ? ` · cost ${esc(fmtMoneyExact(grade.cost_usd))}` : ''}.
+          ${isAdmin ? 'Changes save as you make them.' : ''}
+        </p>
+        <div class="sc-filters">
+          ${(isAdmin ? FILTERS : FILTERS.filter(([key]) => key !== 'review')).map(([key, label, match]) => `
+            <button class="btn btn--ghost btn--sm" type="button" data-filter="${key}" aria-pressed="${filter === key}">
+              ${label} (${allItems.filter(i => match(i.id)).length})
+            </button>`).join('')}
+          ${isAdmin ? `
+            <span style="flex:1"></span>
+            ${reviewed ? `<button class="btn btn--ghost btn--sm" type="button" id="sc-revert">Revert to the model's grades</button>` : ''}
+            <button class="btn btn--ghost btn--sm" type="button" id="sc-regrade">Re-grade</button>` : ''}
+        </div>
+        ${shown.length ? shown.map(({ section, items }) => `
+          <div class="sc-section">
+            <div class="sc-section__head">
+              <strong>${esc(section.section_number)}. ${esc(section.section_name)}</strong>
+              <span class="muted">${esc(scTallyText(scorecardTally(section.items, finalOf)))}</span>
+            </div>
+            ${items.map(itemHtml).join('')}
+          </div>`).join('') : empty('Nothing in this view.')}
+      </div>`;
+  }
+
+  // Assigned, not added: this function runs again after a grade or a revert,
+  // on the same host element, and must replace the previous run's handlers
+  // rather than stack a second set on top of them.
+  host.onclick = async e => {
+    const filterBtn = e.target.closest('[data-filter]');
+    if (filterBtn) { filter = filterBtn.dataset.filter; return render(); }
+
+    if (e.target.id === 'sc-report-open') {
+      return openScorecardReport({
+        rec, card, sections, allItems, aiOf, finalOf, changed, isAdmin,
+        noteOf: id => manual[id]?.note ?? '',
+      });
+    }
+
+    const verdictBtn = e.target.closest('[data-verdict]');
+    if (verdictBtn && isAdmin) {
+      const id = verdictBtn.dataset.item;
+      manual[id] = { ...manual[id], verdict: verdictBtn.dataset.verdict, checked: true };
+      save();
+      return render();
+    }
+
+    const confirmBtn = e.target.closest('[data-confirm]');
+    if (confirmBtn && isAdmin) {
+      const id = confirmBtn.dataset.confirm;
+      manual[id] = { ...manual[id], verdict: finalOf(id), checked: true };
+      save();
+      return render();
+    }
+
+    if (e.target.id === 'sc-revert') {
+      if (!confirm("Discard every regrade and note on this scorecard and go back to the model's grades?")) return;
+      try {
+        await saving;
+        await db.clearScorecardReview(grade.id);
+        toast("Reverted to the model's grades.", 'ok');
+      } catch (err) { toast(err.message, 'error'); }
+      return drawScorecard(rec, ctx, turns);
+    }
+
+    if (e.target.id === 'sc-regrade') {
+      const warning = Object.keys(manual).length
+        ? 'Grade this call again? The new grade replaces this one on screen, and the regrades and notes made here will not carry over.'
+        : 'Grade this call again?';
+      if (confirm(warning)) runGrade(e.target);
+    }
+  };
+
+  // Notes save when the box loses focus, not per keystroke, and without a
+  // re-render — that would steal focus from whatever was clicked next.
+  host.onchange = e => {
+    const id = e.target.dataset?.note;
+    if (!id || !isAdmin) return;
+    manual[id] = { ...manual[id], verdict: finalOf(id), note: e.target.value.trim(), checked: manual[id]?.checked ?? false };
+    save();
+  };
+
+  render();
 }
 
 /* --- compliance findings: per-finding manual review ------------------------
@@ -1775,11 +2185,38 @@ const scoreLevelChip = level => {
   return `<span class="chip chip--${level}"><span aria-hidden="true">${meta.icon}</span>${meta.label}</span>`;
 };
 
-export async function agentLeaderboard(main) {
+// Two leaderboards, one layout. The first ranks every scored call on the
+// rubric's 0-100 coaching score; the Medicare one ranks only calls graded
+// against the pass/fail scorecard, on scorecard percentage. They are kept as
+// separate pages rather than blended because the two numbers measure
+// different things and are not comparable.
+const LEADERBOARDS = {
+  rubric: {
+    title: 'Leaderboard',
+    sub: 'Average call score, ranked highest to lowest',
+    fetch: (start, end) => db.scoringLeaderboard(start, end),
+    countLabel: 'Calls scored',
+    scoreLabel: 'Avg score',
+    emptyText: 'No scored calls in this period.',
+  },
+  medicare: {
+    title: 'Medicare leaderboard',
+    sub: 'Average Medicare scorecard percentage, ranked highest to lowest',
+    fetch: (start, end) => db.scorecardLeaderboard(start, end),
+    countLabel: 'Calls graded',
+    scoreLabel: 'Avg scorecard %',
+    emptyText: 'No calls graded against the Medicare scorecard in this period.',
+  },
+};
+
+export const agentLeaderboard = main => drawLeaderboard(main, LEADERBOARDS.rubric);
+export const medicareLeaderboard = main => drawLeaderboard(main, LEADERBOARDS.medicare);
+
+async function drawLeaderboard(main, board) {
   main.innerHTML = `
     <div class="page__head"><div>
-      <h1>Leaderboard</h1>
-      <div class="page__sub">Average call score, ranked highest to lowest</div>
+      <h1>${esc(board.title)}</h1>
+      <div class="page__sub">${esc(board.sub)}</div>
     </div></div>
     <div class="card" style="margin-bottom:16px">
       <div class="card__head"><h2>What the colors mean</h2></div>
@@ -1817,11 +2254,17 @@ export async function agentLeaderboard(main) {
   async function draw() {
     body.innerHTML = spinner();
     const { start, end } = range(rangeSel.value);
-    const rows = await db.scoringLeaderboard(start, end);
+    let rows;
+    try {
+      rows = await board.fetch(start, end);
+    } catch (err) {
+      body.innerHTML = empty(`Could not load this leaderboard: ${err.message}`);
+      return;
+    }
     const filtered = activeTab === 'all' ? rows : rows.filter(r => r.team_name === activeTab);
 
     if (filtered.length === 0) {
-      body.innerHTML = empty('No scored calls in this period.');
+      body.innerHTML = empty(board.emptyText);
       return;
     }
 
@@ -1840,7 +2283,7 @@ export async function agentLeaderboard(main) {
       <div class="tablewrap"><table>
         <thead><tr>
           <th>Rank</th><th>Agent</th><th>Team</th>
-          <th class="num">Calls scored</th><th class="num">Avg score</th><th></th>
+          <th class="num">${esc(board.countLabel)}</th><th class="num">${esc(board.scoreLabel)}</th><th></th>
         </tr></thead>
         <tbody>${ranked.map(r => {
           const level = scoreLevel(r.avg_score);

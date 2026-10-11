@@ -17,6 +17,8 @@ lana/
 │     ├─ score-call/        Edge Function: transcript → Claude → scores
 │     │  ├─ index.ts
 │     │  └─ rubric.ts       ← the rubric; also the cached prompt prefix
+│     ├─ score-scorecard/   Edge Function: transcript → Claude → pass/fail scorecard
+│     │                     (needs 035_scorecards.sql; separate from score-call)
 │     └─ transcribe-call/   Edge Function: audio → transcript (optional)
 └─ public/
    ├─ index.html
@@ -178,6 +180,20 @@ injected automatically — don't set them yourself.
 Optional overrides: `SCORING_MODEL` (default `claude-opus-5`), `SCORING_EFFORT`
 (default `high`), `MAX_TRANSCRIPT_CHARS` (default 200,000), `ALLOWED_ORIGIN`
 (default `*` — set it to your deployed origin).
+
+### Medicare scorecard (`score-scorecard`)
+
+A second instrument beside the rubric score: a pass/fail compliance checklist.
+Needs `035_scorecards.sql` and its own deploy (`supabase functions deploy
+score-scorecard`); it reuses `ANTHROPIC_API_KEY`.
+
+It grades from the "Grade against scorecard" button on any call. To grade
+Medicare calls automatically, add a Database Webhook (Dashboard → Database →
+Webhooks) on `call_recordings`, events **Insert + Update**, type Supabase Edge
+Function → `score-scorecard`, timeout at the maximum. The function ignores
+everything except a call with call type Medicare arriving at `transcribed` for
+the first time with no grade yet. `AUTO_SCORECARD=off` stops the automatic path
+without removing the webhook.
 
 ### Transcription
 

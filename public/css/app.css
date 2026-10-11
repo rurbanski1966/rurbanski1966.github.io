@@ -688,6 +688,113 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .toast--error { border-left-color: var(--critical); }
 .toast--ok    { border-left-color: var(--good); }
 
+/* --- Scorecard (pass/fail checklist on a call) --------------------------- */
+.sc-filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 4px; }
+.sc-filters .btn[aria-pressed="true"] { border-color: var(--brand); color: var(--brand); }
+.sc-section { margin-top: 20px; }
+.sc-section__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--grid);
+  font-size: 14px;
+}
+.sc-item { padding: 12px 0 12px 12px; border-left: 3px solid var(--baseline); margin-top: 10px; }
+.sc-item--pass { border-left-color: var(--good); }
+.sc-item--fail { border-left-color: var(--critical); }
+.sc-item__head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.sc-item__meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; font-size: 12px; }
+.sc-verdict { display: inline-flex; flex: none; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.sc-verdict button {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 0;
+  border-left: 1px solid var(--border);
+  padding: 5px 11px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.sc-verdict button:first-child { border-left: 0; }
+.sc-verdict button[aria-pressed="true"] { color: var(--brand-ink); font-weight: 600; }
+.sc-verdict button[aria-pressed="true"][data-verdict="pass"] { background: var(--good); }
+.sc-verdict button[aria-pressed="true"][data-verdict="fail"] { background: var(--critical); color: #fff; }
+.sc-verdict button[aria-pressed="true"][data-verdict="na"]   { background: var(--text-muted); }
+.sc-flag {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+}
+.sc-checks { list-style: none; display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 0; padding: 0; font-size: 13px; }
+.sc-checks li::before { content: "–"; margin-right: 5px; color: var(--text-muted); }
+.sc-checks li[data-status="met"]::before    { content: "✓"; color: var(--good); }
+.sc-checks li[data-status="missed"]::before { content: "✗"; color: var(--critical); }
+.sc-item details { margin-top: 8px; font-size: 13px; color: var(--text-muted); }
+.sc-item details summary { cursor: pointer; }
+/* Detailed call rubric report — a modal over the call page. */
+.sc-report {
+  width: min(940px, 94vw);
+  max-height: 90vh;
+  padding: 0;
+  overflow-y: auto;
+  color: var(--text-primary);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.sc-report::backdrop { background: rgba(0, 0, 0, .65); }
+.sc-report__bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 20px;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--grid);
+}
+.sc-report__bar h2 { margin: 0; font-size: 17px; }
+.sc-report__body { padding: 18px 20px 24px; }
+.sc-report__h { margin: 22px 0 8px; font-size: 14px; }
+.sc-report__pts { flex: none; font-variant-numeric: tabular-nums; }
+.sc-report__label {
+  margin-top: 10px;
+  font-size: 11px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.sc-report__text { margin: 3px 0 0; font-size: 13px; white-space: pre-wrap; }
+.sc-report__quote {
+  margin: 6px 0 0;
+  padding: 4px 0 4px 10px;
+  border-left: 2px solid var(--baseline);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.sc-report .sc-section { scroll-margin-top: 60px; }
+
+.sc-note {
+  width: 100%;
+  margin-top: 8px;
+  min-height: 34px;
+  resize: vertical;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 9px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }

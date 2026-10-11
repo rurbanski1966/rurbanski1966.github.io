@@ -11,7 +11,7 @@
 // an unauthenticated empty array reach the UI.
 // ---------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=58';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=59';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true },
@@ -516,6 +516,71 @@ export const transcribeCall = recordingId => invokeFunction('transcribe-call', {
 // changed since the last generation.
 export const generateManualSummary = scoreId => invokeFunction('summarize-review', { score_id: scoreId });
 
+/* --- Pass/fail scorecard (migration 035) ---------------------------------
+   A second instrument beside the rubric score: a checklist graded item by
+   item by its own Edge Function, score-scorecard. The model's grade is never
+   edited; a reviewer's regrade is written to the manual_* columns beside it.
+   -------------------------------------------------------------------------- */
+export const gradeScorecard = recordingId => invokeFunction('score-scorecard', { recording_id: recordingId });
+
+export async function activeScorecard() {
+  await requireSession();
+  return unwrap(
+    await supabase.from('scorecards').select('id, name, version, definition').eq('is_active', true).maybeSingle()
+  );
+}
+
+// Latest grade for a call, with the scorecard version that produced it — the
+// item wording and point values shown must be the ones it was graded under,
+// not whatever is active today.
+export async function scorecardForRecording(recordingId) {
+  await requireSession();
+  return unwrap(
+    await supabase
+      .from('call_scorecards')
+      .select('*, scorecard:scorecards(id, name, version, definition), reviewer:profiles!call_scorecards_reviewed_by_fkey(full_name)')
+      .eq('recording_id', recordingId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+  );
+}
+
+// RLS (call_scorecards_admin) restricts this to admins.
+export async function saveScorecardReview(id, manualItems, totals) {
+  const session = await requireSession();
+  return unwrap(
+    await supabase
+      .from('call_scorecards')
+      .update({
+        manual_items: manualItems,
+        manual_earned: totals.earned,
+        manual_possible: totals.possible,
+        manual_percent: totals.percent,
+        reviewed_by: session.user.id,
+        reviewed_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .select('id')
+      .single()
+  );
+}
+
+export async function clearScorecardReview(id) {
+  await requireSession();
+  return unwrap(
+    await supabase
+      .from('call_scorecards')
+      .update({
+        manual_items: null, manual_earned: null, manual_possible: null, manual_percent: null,
+        reviewed_by: null, reviewed_at: null,
+      })
+      .eq('id', id)
+      .select('id')
+      .single()
+  );
+}
+
 // Creating a user with an admin-chosen password, and deleting one, both need
 // the Auth Admin API — the anon key this file holds can't do either, so both
 // go through the admin-users Edge Function instead of a table write.
@@ -536,6 +601,13 @@ export const deleteAgent = userId =>
 export async function scoringLeaderboard(start, end) {
   await requireSession();
   return unwrap(await supabase.rpc('scoring_leaderboard', { p_start: start, p_end: end }));
+}
+
+// Medicare leaderboard — same row shape, ranked on scorecard percentage
+// (migration 035) instead of the rubric score.
+export async function scorecardLeaderboard(start, end) {
+  await requireSession();
+  return unwrap(await supabase.rpc('scorecard_leaderboard', { p_start: start, p_end: end }));
 }
 
 /* --- calibration ----------------------------------------------------------

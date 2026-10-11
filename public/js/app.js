@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
 // Boot, auth gate, hash router, nav.
 // ---------------------------------------------------------------------------
-import { isConfigured, SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=58';
-import { toast, esc } from './ui.js?v=58';
+import { isConfigured, SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=59';
+import { toast, esc } from './ui.js?v=59';
 
 // Bump when debugging a stale-cache problem: if the browser doesn't show this
 // exact string, it is running old code and nothing else you observe is real.
@@ -39,13 +39,13 @@ if (!isConfigured()) {
 
 console.info(`Lana ${BUILD} — config loaded, URL ${SUPABASE_URL}`);
 
-const db = await import('./db.js?v=58');
-const agentViews = await import('./views-agent.js?v=58');
-const adminViews = await import('./views-admin.js?v=58');
-const scoringViews = await import('./views-scoring.js?v=58');
-const rubricViews = await import('./views-rubric.js?v=58');
-const accountViews = await import('./views-account.js?v=58');
-const analyticsViews = await import('./views-analytics.js?v=58');
+const db = await import('./db.js?v=59');
+const agentViews = await import('./views-agent.js?v=59');
+const adminViews = await import('./views-admin.js?v=59');
+const scoringViews = await import('./views-scoring.js?v=59');
+const rubricViews = await import('./views-rubric.js?v=59');
+const accountViews = await import('./views-account.js?v=59');
+const analyticsViews = await import('./views-analytics.js?v=59');
 
 const ctx = { profile: null };
 
@@ -63,6 +63,7 @@ const ROUTES = {
   // be able to see it. Editing is gated inside the view.
   '#/rubric':               { title: 'Scoring rubric', render: rubricViews.rubric, roles: ['agent', 'dialer', 'admin'] },
   '#/leaderboard':          { title: 'Leaderboard', render: scoringViews.agentLeaderboard, roles: ['agent', 'dialer', 'admin'] },
+  '#/leaderboard/medicare': { title: 'Medicare leaderboard', render: scoringViews.medicareLeaderboard, roles: ['agent', 'dialer', 'admin'] },
 
   '#/admin/agents':         { title: 'Agents',      render: adminViews.agents,      roles: ['admin'] },
   '#/admin/scripts':        { title: 'Scripts',     render: adminViews.scripts,     roles: ['admin'] },
@@ -105,7 +106,7 @@ function resolve(hash) {
 
 const NAV = [
   { section: 'Agent',    items: ['#/dashboard', '#/my-sales'] },
-  { section: 'Coaching', items: ['#/reviews', '#/rubric', '#/leaderboard'] },
+  { section: 'Coaching', items: ['#/reviews', '#/rubric', '#/leaderboard', '#/leaderboard/medicare'] },
   { section: 'Admin',    items: ['#/admin/agents', '#/admin/scripts', '#/admin/scorecard', '#/admin/calibration', '#/admin/analytics', '#/admin/reports'] },
 ];
 
