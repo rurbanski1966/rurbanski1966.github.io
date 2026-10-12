@@ -5,12 +5,12 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=59';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES } from './config.js?v=59';
+import * as db from './db.js?v=60';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES } from './config.js?v=60';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
   toast, statTile, barRow, empty, spinner, selectField, loadPdfMake, loadJSZip, downloadBlob,
-} from './ui.js?v=59';
+} from './ui.js?v=60';
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -926,8 +926,8 @@ export async function reviewDetail(main, ctx, recordingId) {
    always clear what a person changed.
 
    Self-contained and failure-tolerant on purpose: if migration 035 hasn't
-   been run, or the lookup fails, this section stays empty rather than
-   taking the rest of the call page down with it.
+   been run, or the lookup fails, this section shows the error in its own
+   card rather than taking the rest of the call page down with it.
    -------------------------------------------------------------------------- */
 const SC_VERDICTS = [['pass', 'Pass'], ['fail', 'Fail'], ['na', 'N/A']];
 const scVerdictLabel = v => SC_VERDICTS.find(([key]) => key === v)?.[1] ?? v;
@@ -1006,7 +1006,10 @@ function openScorecardReport({ rec, card, sections, allItems, aiOf, finalOf, cha
   dialog.innerHTML = `
     <div class="sc-report__bar">
       <h2 id="sc-report-title">Detailed call rubric report</h2>
-      <button class="btn btn--ghost btn--sm" type="button" data-close>Close</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn--primary btn--sm" type="button" data-pdf>Download as PDF</button>
+        <button class="btn btn--ghost btn--sm" type="button" data-close>Close</button>
+      </div>
     </div>
     <div class="sc-report__body">
       <p class="muted" style="margin:0 0 16px">
@@ -1058,7 +1061,31 @@ function openScorecardReport({ rec, card, sections, allItems, aiOf, finalOf, cha
         </div>`).join('')}
     </div>`;
 
+  async function downloadPdf(btn) {
+    btn.disabled = true;
+    btn.textContent = 'Preparing PDF…';
+    try {
+      await loadPdfMake();
+      const agentSlug = (rec.agent?.full_name || rec.agent_name || 'agent')
+        .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      const doc = scorecardReportDocDefinition({
+        rec, card, rows, total, fullPoints, naItems, naPoints, aiOf, finalOf, changed, noteOf, isAdmin,
+      });
+      const blob = await new Promise((resolve, reject) => {
+        try { window.pdfMake.createPdf(doc).getBlob(resolve); } catch (err) { reject(err); }
+      });
+      downloadBlob(blob, `rubric-report-${agentSlug}-${rec.call_on}.pdf`);
+    } catch (err) {
+      toast(err.message || 'Could not generate the PDF.', 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Download as PDF';
+    }
+  }
+
   dialog.addEventListener('click', e => {
+    const pdfBtn = e.target.closest('[data-pdf]');
+    if (pdfBtn) return downloadPdf(pdfBtn);
     // A click on the dialog element itself is a click on the backdrop.
     if (e.target === dialog || e.target.closest('[data-close]')) return dialog.close();
     const jump = e.target.closest('[data-jump]');
@@ -1073,6 +1100,179 @@ function openScorecardReport({ rec, card, sections, allItems, aiOf, finalOf, cha
   dialog.showModal();
 }
 
+// The same report as a pdfmake document — see coachingReportDocDefinition for
+// why pdfmake. Takes the figures openScorecardReport already worked out, so
+// the PDF can never disagree with the report on screen.
+function scorecardReportDocDefinition({
+  rec, card, rows, total, fullPoints, naItems, naPoints, aiOf, finalOf, changed, noteOf, isAdmin,
+}) {
+  const agentName = rec.agent?.full_name || rec.agent_name || 'Unknown agent';
+  const pts = n => `${fmtNum(n)} pt${n === 1 ? '' : 's'}`;
+  // pdfmake's embedded Roboto has no tick, cross or arrow glyph; the
+  // scorecard wording uses all three ("✓ PASS if…") and they would print as
+  // empty boxes.
+  const clean = s => String(s ?? '').replace(/[✓✔✗✘]\s*/g, '').replace(/→/g, '->').trim();
+  const verdictColor = v => (v === 'pass' ? '#146c46' : v === 'fail' ? '#96281d' : '#666666');
+  const tableHeader = text => ({ text, bold: true, fontSize: 8, color: '#666666' });
+  const num = (text, extra = {}) => ({ ...extra, text: String(text), alignment: 'right' });
+  const label = text => ({ text: text.toUpperCase(), fontSize: 7, bold: true, color: '#888888', margin: [0, 5, 0, 1] });
+
+  const infoLine = [
+    agentName,
+    fmtDate(rec.call_on),
+    rec.title || null,
+    rec.team?.name ? `Agency Assigned: ${rec.team.name}` : null,
+    rec.script?.name ? `Script: ${rec.script.name}` : null,
+    `${card.name}, version ${card.version}`,
+  ].filter(Boolean).join('  ·  ');
+
+  const scored = t => (t.possible ? `${fmtNum(t.earned)} / ${fmtNum(t.possible)}` : 'N/A');
+  const band = total.percent == null ? ['#444444', '#f0f0f0']
+    : total.percent >= 80 ? ['#146c46', '#e8f7ee']
+    : total.percent >= 70 ? ['#8a6508', '#fff6e0'] : ['#96281d', '#fdeceb'];
+
+  const content = [
+    { text: [{ text: 'L', color: '#7C2FD6' }, { text: 'ANA', color: '#1E1029' }], bold: true, fontSize: 20 },
+    { text: 'AI SALES COACHING & SCORING', fontSize: 8, bold: true, color: '#8B7FA0', characterSpacing: 1, margin: [0, 2, 0, 16] },
+
+    { text: 'Detailed call rubric report', fontSize: 18, bold: true, margin: [0, 0, 0, 4] },
+    { text: infoLine, fontSize: 9, color: '#666666', margin: [0, 0, 0, 14] },
+
+    {
+      table: {
+        widths: ['*'],
+        body: [[{
+          stack: [
+            { text: 'Total score', fontSize: 9, color: '#555555' },
+            {
+              text: total.possible ? `${fmtNum(total.earned)} of ${fmtNum(total.possible)} points  ·  ${total.percent}%` : 'Nothing applicable',
+              fontSize: 20, bold: true, color: band[0], margin: [0, 3, 0, 3],
+            },
+            {
+              text: `The scorecard totals ${pts(fullPoints)}. ` + (naItems.length
+                ? `${fmtNum(naItems.length)} item${naItems.length === 1 ? '' : 's'} worth ${pts(naPoints)} did not apply to this call and ${naItems.length === 1 ? 'is' : 'are'} left out of the score.`
+                : 'Every item applied to this call.'),
+              fontSize: 8, color: '#666666',
+            },
+          ],
+          fillColor: band[1],
+          margin: [10, 8, 10, 8],
+        }]],
+      },
+      layout: 'noBorders',
+      margin: [0, 0, 0, 16],
+    },
+
+    { text: 'Points by section', fontSize: 13, bold: true, margin: [0, 0, 0, 6] },
+    {
+      table: {
+        widths: ['*', 'auto', 'auto', 'auto'],
+        headerRows: 1,
+        body: [
+          [tableHeader('Section'), num('Points available', tableHeader('')), num('N/A', tableHeader('')), num('Points scored', tableHeader(''))],
+          ...rows.map(r => [
+            `${r.section.section_number}. ${r.section.section_name}`,
+            num(fmtNum(r.available)),
+            num(r.na ? fmtNum(r.na) : '—'),
+            num(scored(r.tally), { bold: true }),
+          ]),
+          [
+            { text: 'Total', bold: true },
+            num(fmtNum(fullPoints), { bold: true }),
+            num(naPoints ? fmtNum(naPoints) : '—', { bold: true }),
+            num(scored(total), { bold: true }),
+          ],
+        ],
+      },
+      layout: 'lightHorizontalLines',
+    },
+  ];
+
+  for (const r of rows) {
+    content.push({
+      columns: [
+        { width: '*', text: `${r.section.section_number}. ${r.section.section_name}`, fontSize: 13, bold: true },
+        {
+          width: 'auto', fontSize: 10, bold: true, margin: [0, 3, 0, 0],
+          text: r.tally.possible
+            ? `Scored ${fmtNum(r.tally.earned)} of ${pts(r.tally.possible)}${r.na ? `  ·  ${pts(r.na)} N/A` : ''}`
+            : `N/A  ·  ${pts(r.available)} not counted`,
+        },
+      ],
+      margin: [0, 18, 0, 6],
+    });
+    content.push({
+      table: {
+        widths: ['30%', '13%', '*'],
+        headerRows: 1,
+        // An item's requirement and its grade stay on one page together.
+        dontBreakRows: true,
+        body: [
+          [tableHeader('Item'), tableHeader('Result'), tableHeader('What earns the points, and how this call was graded')],
+          ...r.section.items.map(item => {
+            const ai = aiOf(item.id);
+            const final = finalOf(item.id);
+            const details = [
+              { ...label('What earns the points'), margin: [0, 0, 0, 1] },
+              { text: clean(item.context), fontSize: 8 },
+            ];
+            if (item.example) details.push({ text: `Example: ${clean(item.example)}`, fontSize: 8, italics: true, color: '#555555', margin: [0, 2, 0, 0] });
+            details.push(label('How this call was graded'));
+            details.push({ text: clean(ai.reason) || 'No explanation was recorded.', fontSize: 8 });
+            if (ai.checkpoints?.length) {
+              details.push({
+                text: `Checkpoints: ${ai.checkpoints.map(c => `${clean(c.name)} (${c.status === 'na' ? 'N/A' : c.status})`).join(', ')}`,
+                fontSize: 8, color: '#444444', margin: [0, 2, 0, 0],
+              });
+            }
+            for (const q of ai.evidence ?? []) {
+              details.push({ text: `"${clean(q)}"`, fontSize: 8, italics: true, color: '#444444', margin: [8, 3, 0, 0] });
+            }
+            const note = noteOf(item.id);
+            if (note) details.push({ text: `Reviewer note: ${clean(note)}`, fontSize: 8, color: '#666666', margin: [0, 3, 0, 0] });
+
+            const result = [
+              { text: scVerdictLabel(final), fontSize: 9, bold: true, color: verdictColor(final) },
+              { text: final === 'na' ? 'Not counted' : `${fmtNum(final === 'pass' ? item.points : 0)} / ${fmtNum(item.points)} pts`, fontSize: 9 },
+            ];
+            if (changed(item.id)) {
+              result.push({
+                text: `Changed by reviewer${isAdmin ? ` (AI said ${scVerdictLabel(ai.verdict)})` : ''}`,
+                fontSize: 7, color: '#8a6508', margin: [0, 2, 0, 0],
+              });
+            }
+            return [
+              { stack: [
+                { text: [{ text: `${item.id}  `, bold: true }, clean(item.question)], fontSize: 9 },
+                { text: `${item.weight} · worth ${pts(item.points)}`, fontSize: 7, color: '#888888', margin: [0, 2, 0, 0] },
+              ] },
+              { stack: result },
+              { stack: details },
+            ];
+          }),
+        ],
+      },
+      layout: 'lightHorizontalLines',
+    });
+  }
+
+  content.push({
+    text: `Generated ${fmtDate(new Date().toISOString())}  ·  N/A items are left out of the score.`,
+    fontSize: 8,
+    color: '#666666',
+    margin: [0, 24, 0, 0],
+  });
+
+  return {
+    info: { title: `Detailed call rubric report - ${agentName} - ${fmtDate(rec.call_on)}` },
+    pageSize: 'LETTER',
+    pageMargins: [40, 40, 40, 44],
+    defaultStyle: { fontSize: 9 },
+    footer: (page, pages) => ({ text: `Page ${page} of ${pages}`, alignment: 'center', fontSize: 8, color: '#888888', margin: [0, 14, 0, 0] }),
+    content,
+  };
+}
+
 async function drawScorecard(rec, ctx, turns) {
   const host = document.getElementById('scorecard-area');
   if (!host) return;
@@ -1083,7 +1283,14 @@ async function drawScorecard(rec, ctx, turns) {
   try {
     grade = await db.scorecardForRecording(rec.id);
     card = grade?.scorecard ?? await db.activeScorecard();
-  } catch {
+  } catch (err) {
+    // Said out loud rather than left blank: an empty section is
+    // indistinguishable from "this account isn't allowed to see it".
+    host.innerHTML = `
+      <div class="card" style="border-color:var(--critical)">
+        <h2>Scorecard could not be loaded</h2>
+        <p class="muted">${esc(err.message)}</p>
+      </div>`;
     return;
   }
   if (!card) return;
