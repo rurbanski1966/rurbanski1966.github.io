@@ -5,12 +5,12 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=60';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES } from './config.js?v=60';
+import * as db from './db.js?v=61';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES } from './config.js?v=61';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
   toast, statTile, barRow, empty, spinner, selectField, loadPdfMake, loadJSZip, downloadBlob,
-} from './ui.js?v=60';
+} from './ui.js?v=61';
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -142,26 +142,63 @@ const normalizeForMatch = s =>
 // most of them; a lightly paraphrased or trimmed quote falls back to whoever
 // shares the most words. Returns a turn index, or -1 when nothing is close
 // enough to point at with any confidence.
+// A call page matches a hundred-odd quotes against the same transcript, and
+// again on every redraw of the scorecard; normalise each transcript once.
+const normTurnsCache = new WeakMap();
+
 function matchQuoteToTurn(quote, turns) {
-  const nq = normalizeForMatch(quote);
-  if (!nq || turns.length === 0) return -1;
-  const normTurns = turns.map(t => normalizeForMatch(t.text));
+  if (!quote || turns.length === 0) return -1;
+  if (!normTurnsCache.has(turns)) normTurnsCache.set(turns, turns.map(t => normalizeForMatch(t.text)));
+  const normTurns = normTurnsCache.get(turns);
+
+  const whole = matchNormalizedQuote(normalizeForMatch(quote), normTurns);
+  if (whole !== -1) return whole;
+
+  // The model often copies the speaker label along with the words ("Speaker
+  // 0: Hi, this is…"), and a turn's text never contains its own label, so
+  // the quote as given can't be found. Drop the labels and look again.
+  const labels = [...new Set(turns.map(t => t.who).filter(Boolean))]
+    .map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const labelRe = new RegExp(`(?:${[...labels, 'speaker\\s*\\d+'].join('|')})\\s*:`, 'gi');
+  const unlabeled = String(quote).replace(labelRe, ' ');
+  if (unlabeled !== String(quote)) {
+    const idx = matchNormalizedQuote(normalizeForMatch(unlabeled), normTurns);
+    if (idx !== -1) return idx;
+  }
+
+  // A quote stitched from separate moments ("… the plan has a $0 premium …
+  // and that covers your doctor") matches nowhere as one string. Its first
+  // piece long enough to be distinctive is where the reader wants to land.
+  // Verbatim only — a fragment is too short to trust on word overlap.
+  const joined = normTurns.join(' ');
+  for (const piece of String(quote).split(/\r?\n|\.{3,}|…|\[[^\]]*\]/).flatMap(p => p.split(labelRe))) {
+    const np = normalizeForMatch(piece);
+    if (np.split(' ').length < 4) continue;
+    const at = joined.indexOf(np);
+    if (at !== -1) return turnIndexAt(at, normTurns);
+  }
+  return -1;
+}
+
+// Which turn a character offset into normTurns.join(' ') falls in.
+function turnIndexAt(at, normTurns) {
+  let offset = 0;
+  let idx = 0;
+  for (let i = 0; i < normTurns.length && offset <= at; i++) {
+    idx = i;
+    offset += normTurns[i].length + 1; // +1 for the joining space
+  }
+  return idx;
+}
+
+function matchNormalizedQuote(nq, normTurns) {
+  if (!nq) return -1;
 
   // Search the whole transcript as one string first, not turn-by-turn — a
   // verbatim quote can start in one turn and run into the next if Deepgram
   // split an utterance mid-sentence, so no single turn would contain it.
-  let offset = 0;
-  const starts = normTurns.map(nt => {
-    const s = offset;
-    offset += nt.length + 1; // +1 for the joining space below
-    return s;
-  });
   const at = normTurns.join(' ').indexOf(nq);
-  if (at !== -1) {
-    let idx = 0;
-    for (let i = 0; i < starts.length && starts[i] <= at; i++) idx = i;
-    return idx;
-  }
+  if (at !== -1) return turnIndexAt(at, normTurns);
 
   // No verbatim hit — the model paraphrased or trimmed the quote. Only trust
   // a fallback when one turn is an unambiguous best fit: a weak or generic
@@ -638,7 +675,7 @@ export async function reviewDetail(main, ctx, recordingId) {
                  ${score ? 'Re-score call' : 'Score call'}
                </button>` : ''}
           <button class="btn btn--ghost" id="reload">Reload</button>
-          ${score?.is_overridden ? `<button class="btn btn--ghost" id="gen-report" type="button">Generate report</button>` : ''}
+          <button class="btn btn--ghost" id="gen-report" type="button"${score?.is_overridden ? '' : ' hidden'}>Generate report</button>
         </div>
         <div id="player" style="margin-top:14px"></div>
         ${!rec.transcript ? `
@@ -722,10 +759,32 @@ export async function reviewDetail(main, ctx, recordingId) {
         await loadPdfMake();
         const agentSlug = (rec.agent?.full_name || rec.agent_name || 'agent')
           .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-        const baseName = `coaching-report-${agentSlug}-${rec.call_on}`;
+        // A call graded against the scorecard (every Medicare call is, on
+        // upload) carries that grade in the same PDF: after the coaching
+        // report when the call has a reviewed score, on its own otherwise.
+        let scorecardArgs = null;
+        try {
+          const grade = await db.scorecardForRecording(rec.id);
+          if (grade?.scorecard) scorecardArgs = scorecardReportArgs(rec, grade, ctx.profile.role === 'admin');
+        } catch (err) {
+          if (!score?.is_overridden) throw err;
+          toast(`Could not load the scorecard, so the report leaves it out: ${err.message}`, 'error');
+        }
+
+        let docDefinition;
+        if (score?.is_overridden) {
+          docDefinition = coachingReportDocDefinition(rec, score);
+          if (scorecardArgs) docDefinition.content.push(...scorecardReportContent(scorecardArgs, { appended: true }));
+        } else if (scorecardArgs) {
+          docDefinition = scorecardReportDocDefinition(scorecardArgs);
+        } else {
+          throw new Error('Nothing to report yet. Grade this call against the scorecard first.');
+        }
+
+        const baseName = `${score?.is_overridden ? 'coaching-report' : 'call-report'}-${agentSlug}-${rec.call_on}`;
         const pdfBlob = await new Promise((resolve, reject) => {
           try {
-            window.pdfMake.createPdf(coachingReportDocDefinition(rec, score)).getBlob(resolve);
+            window.pdfMake.createPdf(docDefinition).getBlob(resolve);
           } catch (err) { reject(err); }
         });
 
@@ -765,7 +824,10 @@ export async function reviewDetail(main, ctx, recordingId) {
     if (score && ctx.profile.role === 'admin') drawOverride(score, draw);
     if (score) drawDimensions(score, ctx, turns, draw);
     if (score) drawFindings(score, ctx, turns, draw);
-    if (rec.transcript) drawScorecard(rec, ctx, turns);
+    // Assigned further down, once the audio helpers it needs exist. The
+    // scorecard only calls it on a click, long after this function returns.
+    let jumpToTurn = () => {};
+    if (rec.transcript) drawScorecard(rec, ctx, turns, idx => jumpToTurn(idx));
 
     document.getElementById('reviewer-toggle')?.addEventListener('click', async e => {
       const btn = e.currentTarget;
@@ -835,16 +897,18 @@ export async function reviewDetail(main, ctx, recordingId) {
     // Clicking a coaching evidence quote scrolls to the transcript line it
     // matched and seeks the audio there — the quote is what the model says
     // proves the score, so verifying it in context is the whole point.
-    const onQuoteClick = e => {
-      const jumpEl = e.target.closest('[data-turn]');
-      if (!jumpEl) return;
-      const turnEl = document.getElementById(`turn-${jumpEl.dataset.turn}`);
+    jumpToTurn = idx => {
+      const turnEl = document.getElementById(`turn-${idx}`);
       if (turnEl) {
         turnEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
         turnEl.classList.add('turn--flash');
         setTimeout(() => turnEl.classList.remove('turn--flash'), 1500);
         if (turnEl.dataset.start !== undefined) ensureAudioAndSeek(Number(turnEl.dataset.start));
       }
+    };
+    const onQuoteClick = e => {
+      const jumpEl = e.target.closest('[data-turn]');
+      if (jumpEl) jumpToTurn(jumpEl.dataset.turn);
     };
     // Both areas get their own DOM subtree recreated on every redraw (by
     // drawDimensions/drawFindings), unlike `main` itself — attaching here
@@ -936,6 +1000,19 @@ const scVerdictChip = (v, prefix = '') => {
   return `<span class="chip${tone ? ` chip--${tone}` : ' muted'}">${esc(prefix + scVerdictLabel(v))}</span>`;
 };
 
+// The transcript line a scorecard item's feedback is about: wherever its
+// first locatable quote is. -1 when the item has no quote (a fail for
+// something never said) or none of them can be found in the transcript.
+function scJumpTurn(ai, turns) {
+  for (const quote of ai.evidence ?? []) {
+    const idx = matchQuoteToTurn(quote, turns);
+    if (idx !== -1) return idx;
+  }
+  return -1;
+}
+const scJumpAttrs = idx =>
+  idx === -1 ? '' : ` data-turn="${idx}" role="button" tabindex="0" title="Play this part of the call"`;
+
 // N/A items leave both numbers. Same rule as score-scorecard/index.ts — keep
 // the two in step.
 function scorecardTally(items, verdictOf) {
@@ -956,26 +1033,56 @@ const scTallyText = t => t.possible ? `${t.earned}/${t.possible} · ${t.percent}
 // that verdict earned, subtotalled by section. Read-only; it shows the same
 // final verdicts as the card behind it, so a reviewer's regrade is reflected
 // and labelled rather than hidden.
-function openScorecardReport({ rec, card, sections, allItems, aiOf, finalOf, changed, noteOf, isAdmin }) {
+const SC_UNGRADED = { verdict: 'na', confidence: 'low', reason: '', evidence: [], checkpoints: [], needs_review: true, review_reason: 'Not graded.' };
+
+// The totals every form of the report prints, worked out in one place so the
+// on-screen report, its PDF and the Generate report bundle cannot disagree.
+function scorecardReportFigures(card, finalOf) {
+  const sections = card.definition.sections;
+  const allItems = sections.flatMap(s => s.items);
+  const naItems = allItems.filter(i => finalOf(i.id) === 'na');
+  return {
+    total: scorecardTally(allItems, finalOf),
+    fullPoints: card.definition.total_points ?? allItems.reduce((n, i) => n + i.points, 0),
+    naItems,
+    naPoints: naItems.reduce((n, i) => n + i.points, 0),
+    rows: sections.map(s => {
+      const tally = scorecardTally(s.items, finalOf);
+      const available = s.items.reduce((n, i) => n + i.points, 0);
+      return { section: s, tally, available, na: available - tally.possible };
+    }),
+  };
+}
+
+// Everything scorecardReportContent needs, read straight off a stored grade
+// row (db.scorecardForRecording) — for callers outside drawScorecard, which
+// has its own live copies of these.
+function scorecardReportArgs(rec, grade, isAdmin) {
+  const card = grade.scorecard;
+  const aiById = new Map(grade.items.map(i => [i.id, i]));
+  const manual = grade.manual_items ?? {};
+  const aiOf = id => aiById.get(id) ?? SC_UNGRADED;
+  const finalOf = id => manual[id]?.verdict ?? aiOf(id).verdict;
+  return {
+    rec, card, aiOf, finalOf, isAdmin,
+    changed: id => finalOf(id) !== aiOf(id).verdict,
+    noteOf: id => manual[id]?.note ?? '',
+    ...scorecardReportFigures(card, finalOf),
+  };
+}
+
+function openScorecardReport({ rec, card, aiOf, finalOf, changed, noteOf, isAdmin }) {
   document.getElementById('sc-report')?.remove();
 
   const pts = n => `${fmtNum(n)} pt${n === 1 ? '' : 's'}`;
-  const total = scorecardTally(allItems, finalOf);
-  const fullPoints = card.definition.total_points ?? allItems.reduce((n, i) => n + i.points, 0);
-  const naItems = allItems.filter(i => finalOf(i.id) === 'na');
-  const naPoints = naItems.reduce((n, i) => n + i.points, 0);
-
-  const rows = sections.map(s => {
-    const tally = scorecardTally(s.items, finalOf);
-    const available = s.items.reduce((n, i) => n + i.points, 0);
-    return { section: s, tally, available, na: available - tally.possible };
-  });
+  const { total, fullPoints, naItems, naPoints, rows } = scorecardReportFigures(card, finalOf);
 
   const itemHtml = item => {
     const ai = aiOf(item.id);
     const final = finalOf(item.id);
     const earned = final === 'pass' ? item.points : 0;
     const note = noteOf(item.id);
+    const jump = scJumpTurn(ai, turns);
     return `
       <div class="sc-item sc-item--${esc(final)}">
         <div class="sc-item__head">
@@ -991,10 +1098,10 @@ function openScorecardReport({ rec, card, sections, allItems, aiOf, finalOf, cha
         <p class="sc-report__text">${esc(item.context)}</p>
         ${item.example ? `<p class="sc-report__text muted"><em>Example:</em> ${esc(item.example)}</p>` : ''}
         <div class="sc-report__label">How this call was graded</div>
-        <p class="sc-report__text">${esc(ai.reason || 'No explanation was recorded.')}</p>
+        <p class="sc-report__text${jump === -1 ? '' : ' evidence--jump'}"${scJumpAttrs(jump)}>${esc(ai.reason || 'No explanation was recorded.')}</p>
         ${ai.checkpoints?.length ? `
           <ul class="sc-checks">${ai.checkpoints.map(c => `<li data-status="${esc(c.status)}">${esc(c.name)}</li>`).join('')}</ul>` : ''}
-        ${(ai.evidence ?? []).map(q => `<blockquote class="sc-report__quote">${esc(q)}</blockquote>`).join('')}
+        <div class="sc-report__quotes">${(ai.evidence ?? []).map(q => evidenceHtml(q, turns)).join('')}</div>
         ${note ? `<p class="sc-report__text muted">Reviewer note: ${esc(note)}</p>` : ''}
       </div>`;
   };
@@ -1088,6 +1195,13 @@ function openScorecardReport({ rec, card, sections, allItems, aiOf, finalOf, cha
     if (pdfBtn) return downloadPdf(pdfBtn);
     // A click on the dialog element itself is a click on the backdrop.
     if (e.target === dialog || e.target.closest('[data-close]')) return dialog.close();
+    // Feedback and quotes that point at a transcript line: the report is in
+    // the way of the transcript, so step aside, then go there and play it.
+    const turnEl = e.target.closest('[data-turn]');
+    if (turnEl) {
+      dialog.close();
+      return jumpToTurn(turnEl.dataset.turn);
+    }
     const jump = e.target.closest('[data-jump]');
     if (jump) {
       // The app's router owns the hash, so scroll instead of navigating.
@@ -1103,9 +1217,24 @@ function openScorecardReport({ rec, card, sections, allItems, aiOf, finalOf, cha
 // The same report as a pdfmake document — see coachingReportDocDefinition for
 // why pdfmake. Takes the figures openScorecardReport already worked out, so
 // the PDF can never disagree with the report on screen.
-function scorecardReportDocDefinition({
+function scorecardReportDocDefinition(args) {
+  const agentName = args.rec.agent?.full_name || args.rec.agent_name || 'Unknown agent';
+  return {
+    info: { title: `Detailed call rubric report - ${agentName} - ${fmtDate(args.rec.call_on)}` },
+    pageSize: 'LETTER',
+    pageMargins: [40, 40, 40, 44],
+    defaultStyle: { fontSize: 9 },
+    footer: (page, pages) => ({ text: `Page ${page} of ${pages}`, alignment: 'center', fontSize: 8, color: '#888888', margin: [0, 14, 0, 0] }),
+    content: scorecardReportContent(args),
+  };
+}
+
+// The report's body. `appended` is for the Generate report bundle, where it
+// follows the coaching report inside one PDF: it starts on a fresh page and
+// drops the masthead the document already opened with.
+function scorecardReportContent({
   rec, card, rows, total, fullPoints, naItems, naPoints, aiOf, finalOf, changed, noteOf, isAdmin,
-}) {
+}, { appended = false } = {}) {
   const agentName = rec.agent?.full_name || rec.agent_name || 'Unknown agent';
   const pts = n => `${fmtNum(n)} pt${n === 1 ? '' : 's'}`;
   // pdfmake's embedded Roboto has no tick, cross or arrow glyph; the
@@ -1132,10 +1261,16 @@ function scorecardReportDocDefinition({
     : total.percent >= 70 ? ['#8a6508', '#fff6e0'] : ['#96281d', '#fdeceb'];
 
   const content = [
-    { text: [{ text: 'L', color: '#7C2FD6' }, { text: 'ANA', color: '#1E1029' }], bold: true, fontSize: 20 },
-    { text: 'AI SALES COACHING & SCORING', fontSize: 8, bold: true, color: '#8B7FA0', characterSpacing: 1, margin: [0, 2, 0, 16] },
+    ...(appended ? [] : [
+      { text: [{ text: 'L', color: '#7C2FD6' }, { text: 'ANA', color: '#1E1029' }], bold: true, fontSize: 20 },
+      { text: 'AI SALES COACHING & SCORING', fontSize: 8, bold: true, color: '#8B7FA0', characterSpacing: 1, margin: [0, 2, 0, 16] },
+    ]),
 
-    { text: 'Detailed call rubric report', fontSize: 18, bold: true, margin: [0, 0, 0, 4] },
+    {
+      text: appended ? card.name : 'Detailed call rubric report',
+      fontSize: 18, bold: true, margin: [0, 0, 0, 4],
+      ...(appended ? { pageBreak: 'before' } : {}),
+    },
     { text: infoLine, fontSize: 9, color: '#666666', margin: [0, 0, 0, 14] },
 
     {
@@ -1263,14 +1398,7 @@ function scorecardReportDocDefinition({
     margin: [0, 24, 0, 0],
   });
 
-  return {
-    info: { title: `Detailed call rubric report - ${agentName} - ${fmtDate(rec.call_on)}` },
-    pageSize: 'LETTER',
-    pageMargins: [40, 40, 40, 44],
-    defaultStyle: { fontSize: 9 },
-    footer: (page, pages) => ({ text: `Page ${page} of ${pages}`, alignment: 'center', fontSize: 8, color: '#888888', margin: [0, 14, 0, 0] }),
-    content,
-  };
+  return content;
 }
 
 async function drawScorecard(rec, ctx, turns) {
@@ -1330,9 +1458,12 @@ async function drawScorecard(rec, ctx, turns) {
     return;
   }
 
+  // A graded call has something to report, whether or not its coaching score
+  // was ever reviewed — see the gen-report handler.
+  document.getElementById('gen-report')?.removeAttribute('hidden');
+
   const aiById = new Map(grade.items.map(i => [i.id, i]));
-  const blank = { verdict: 'na', confidence: 'low', reason: '', evidence: [], checkpoints: [], needs_review: true, review_reason: 'Not graded.' };
-  const aiOf = id => aiById.get(id) ?? blank;
+  const aiOf = id => aiById.get(id) ?? SC_UNGRADED;
 
   // { item id: { verdict, note, checked } } — only items a reviewer touched.
   const manual = structuredClone(grade.manual_items ?? {});
@@ -1364,6 +1495,7 @@ async function drawScorecard(rec, ctx, turns) {
     const ai = aiOf(item.id);
     const final = finalOf(item.id);
     const note = manual[item.id]?.note ?? '';
+    const jump = scJumpTurn(ai, turns);
     return `
       <div class="sc-item sc-item--${esc(final)}">
         <div class="sc-item__head">
@@ -1382,7 +1514,7 @@ async function drawScorecard(rec, ctx, turns) {
                 <button type="button" data-item="${esc(item.id)}" data-verdict="${v}" aria-pressed="${final === v}">${label}</button>`).join('')}
             </div>` : ''}
         </div>
-        <div class="muted" style="margin:8px 0">${esc(ai.reason)}</div>
+        <div class="muted${jump === -1 ? '' : ' evidence--jump'}" style="margin:8px 0"${scJumpAttrs(jump)}>${esc(ai.reason)}</div>
         ${isAdmin && ai.needs_review && ai.review_reason ? `
           <div class="sc-flag">
             Flagged: ${esc(ai.review_reason)}
@@ -1476,7 +1608,7 @@ async function drawScorecard(rec, ctx, turns) {
 
     if (e.target.id === 'sc-report-open') {
       return openScorecardReport({
-        rec, card, sections, allItems, aiOf, finalOf, changed, isAdmin,
+        rec, card, aiOf, finalOf, changed, isAdmin,
         noteOf: id => manual[id]?.note ?? '',
       });
     }

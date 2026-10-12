@@ -644,6 +644,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .turn--flash { outline: 2px solid var(--warning); outline-offset: -2px; }
 .evidence--jump { cursor: pointer; }
 .evidence--jump:hover { text-decoration: underline; }
+/* The play mark is what says "this is clickable" before anyone hovers. */
+.evidence--jump::before { content: "B6"; margin-right: 6px; font-size: .75em; color: var(--brand); }
 
 @media (max-width: 620px) {
   .turn, .turn--plain { grid-template-columns: 1fr; gap: 2px; }
@@ -772,13 +774,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   color: var(--text-muted);
 }
 .sc-report__text { margin: 3px 0 0; font-size: 13px; white-space: pre-wrap; }
-.sc-report__quote {
-  margin: 6px 0 0;
-  padding: 4px 0 4px 10px;
-  border-left: 2px solid var(--baseline);
-  font-size: 13px;
-  color: var(--text-secondary);
-}
+.sc-report__quotes { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; color: var(--text-secondary); }
 .sc-report .sc-section { scroll-margin-top: 60px; }
 
 .sc-note {
