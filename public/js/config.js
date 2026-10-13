@@ -34,12 +34,19 @@ export const ROLES = [
   { value: 'dialer', label: 'Dialer' },
 ];
 
-// A call's category — Ancillary or Medicare — separate from CATEGORIES above,
-// which is for sales submissions, not calls.
+// A call's category, separate from CATEGORIES above, which is for sales
+// submissions, not calls. Must match the check constraint in migration 036.
 export const CALL_TYPES = [
   { value: 'ancillary', label: 'Ancillary' },
   { value: 'medicare',  label: 'Medicare' },
+  { value: 'medicare_ancillary', label: 'Medicare + Ancillary' },
 ];
+
+// A Medicare-only call is graded by the Medicare scorecard alone, so its
+// coaching-rubric score (overall, By dimension, findings) is not shown. A
+// Medicare + Ancillary call shows both: the scorecard for the Medicare
+// portion, the rubric for the ancillary portion.
+export const showsRubricScore = callType => callType !== 'medicare';
 
 // Must match the DIMENSIONS array in supabase/functions/score-call/rubric.ts.
 // If you add a dimension there, add it here or the UI silently drops it.

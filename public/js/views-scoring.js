@@ -5,12 +5,12 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=61';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES } from './config.js?v=61';
+import * as db from './db.js?v=62';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, showsRubricScore } from './config.js?v=62';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
   toast, statTile, barRow, empty, spinner, selectField, loadPdfMake, loadJSZip, downloadBlob,
-} from './ui.js?v=61';
+} from './ui.js?v=62';
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -225,6 +225,7 @@ const REVIEWS_FILTER_KEY = 'lana-reviews-agent-filter';
 // list embeds every score row a recording has ever had rather than a single
 // pre-resolved column.
 function effectiveScoreFor(rec) {
+  if (!showsRubricScore(rec.call_type)) return null;
   const scores = rec.call_scores;
   if (!Array.isArray(scores) || scores.length === 0) return null;
   const latest = scores.reduce((a, b) => (new Date(b.created_at) > new Date(a.created_at) ? b : a));
@@ -637,7 +638,10 @@ export async function reviewDetail(main, ctx, recordingId) {
       return;
     }
 
-    const score = rec.status === 'scored' ? await db.scoreForRecording(rec.id) : null;
+    // Left null on a Medicare-only call, which takes the whole coaching
+    // score off the page and out of the report; the scorecard is its grade.
+    const showRubric = showsRubricScore(rec.call_type);
+    const score = showRubric && rec.status === 'scored' ? await db.scoreForRecording(rec.id) : null;
     const busy = rec.status === 'transcribing' || rec.status === 'scoring';
     const turns = parseTurns(rec.transcript);
 
@@ -670,7 +674,7 @@ export async function reviewDetail(main, ctx, recordingId) {
           ${rec.storage_path ? `<button class="btn" id="play">Play audio</button>` : ''}
           ${rec.storage_path && !rec.transcript
             ? `<button class="btn" id="transcribe"${busy ? ' disabled' : ''}>Transcribe audio</button>` : ''}
-          ${rec.transcript
+          ${rec.transcript && showRubric
             ? `<button class="btn btn--primary" id="score"${busy ? ' disabled' : ''}>
                  ${score ? 'Re-score call' : 'Score call'}
                </button>` : ''}
@@ -1071,7 +1075,7 @@ function scorecardReportArgs(rec, grade, isAdmin) {
   };
 }
 
-function openScorecardReport({ rec, card, aiOf, finalOf, changed, noteOf, isAdmin }) {
+function openScorecardReport({ rec, card, aiOf, finalOf, changed, noteOf, isAdmin, turns = [], jumpToTurn = () => {} }) {
   document.getElementById('sc-report')?.remove();
 
   const pts = n => `${fmtNum(n)} pt${n === 1 ? '' : 's'}`;
@@ -1401,7 +1405,7 @@ function scorecardReportContent({
   return content;
 }
 
-async function drawScorecard(rec, ctx, turns) {
+async function drawScorecard(rec, ctx, turns, jumpToTurn = () => {}) {
   const host = document.getElementById('scorecard-area');
   if (!host) return;
   const isAdmin = ctx.profile.role === 'admin';
@@ -1439,7 +1443,7 @@ async function drawScorecard(rec, ctx, turns) {
     } catch (err) {
       toast(err.message, 'error');
     }
-    drawScorecard(rec, ctx, turns);
+    drawScorecard(rec, ctx, turns, jumpToTurn);
   }
 
   if (!grade) {
@@ -1608,7 +1612,7 @@ async function drawScorecard(rec, ctx, turns) {
 
     if (e.target.id === 'sc-report-open') {
       return openScorecardReport({
-        rec, card, aiOf, finalOf, changed, isAdmin,
+        rec, card, aiOf, finalOf, changed, isAdmin, turns, jumpToTurn,
         noteOf: id => manual[id]?.note ?? '',
       });
     }
@@ -1636,7 +1640,7 @@ async function drawScorecard(rec, ctx, turns) {
         await db.clearScorecardReview(grade.id);
         toast("Reverted to the model's grades.", 'ok');
       } catch (err) { toast(err.message, 'error'); }
-      return drawScorecard(rec, ctx, turns);
+      return drawScorecard(rec, ctx, turns, jumpToTurn);
     }
 
     if (e.target.id === 'sc-regrade') {

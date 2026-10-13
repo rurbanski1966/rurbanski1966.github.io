@@ -45,7 +45,7 @@ const MAX_TRANSCRIPT_CHARS = Number(Deno.env.get('MAX_TRANSCRIPT_CHARS') ?? 200_
 const AUTO_SCORECARD = (Deno.env.get('AUTO_SCORECARD') ?? 'on').toLowerCase() !== 'off';
 // The scorecard is a Medicare compliance audit. Only these call types are
 // graded automatically; anything else can still be graded with the button.
-const AUTO_CALL_TYPES = ['medicare'];
+const AUTO_CALL_TYPES = ['medicare', 'medicare_ancillary'];
 
 // Keep in step with the table in score-call/index.ts.
 const PRICING: Record<string, { input: number; output: number; cacheRead: number }> = {
@@ -351,6 +351,16 @@ Deno.serve(async req => {
       ? `The agent was working from this script. Where a scorecard item refers to "the script", this is it.` +
         `\n\n<script name="${script.name.replace(/"/g, "'")}">\n${script.content.trim()}\n</script>\n\n`
       : '';
+    // On a combined call the ancillary product is graded by the coaching
+    // rubric (score-call); this scorecard is only for the Medicare portion.
+    const callTypeBlock = rec.call_type === 'medicare_ancillary'
+      ? `This call covers both a Medicare plan and an ancillary (non-Medicare) product such as final ` +
+        `expense, dental/vision/hearing, hospital indemnity, or critical illness. Grade ONLY the Medicare ` +
+        `portion against this scorecard. Nothing the agent says or leaves out while presenting or closing ` +
+        `the ancillary product counts for or against any item.
+
+`
+      : '';
 
     const anthropic = new Anthropic({ apiKey: Deno.env.get('ANTHROPIC_API_KEY')! });
     const systemPrompt = buildSystemPrompt(scorecard);
@@ -375,6 +385,7 @@ Deno.serve(async req => {
             role: 'user',
             content:
               scriptBlock +
+              callTypeBlock +
               `<transcript>\n${transcript}\n</transcript>\n\n` +
               (truncated ? 'NOTE: the transcript was truncated for length. Flag for review any item that depends on the part you cannot see.\n\n' : '') +
               `Grade this call on these scorecard items, and only these: ${ids.join(', ')}.`,

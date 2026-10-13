@@ -183,6 +183,17 @@ Optional overrides: `SCORING_MODEL` (default `claude-opus-5`), `SCORING_EFFORT`
 
 ### Medicare scorecard (`score-scorecard`)
 
+Call types decide which grade a call shows (migration 036 adds the third):
+
+- **Ancillary**: the coaching rubric (overall score, By dimension, findings).
+- **Medicare**: the Medicare scorecard only. The rubric score is not displayed.
+- **Medicare + Ancillary**: both. The scorecard grades the Medicare portion and
+  the rubric grades the ancillary portion; each grader is told to ignore the other.
+  Set automatically: a Medicare call whose transcript mentions a routing number
+  and an account turns into this type when the transcript arrives (trigger in 036).
+  Auto-graded on upload like a Medicare call. Changing this needs `score-call`
+  and `score-scorecard` redeployed.
+
 A second instrument beside the rubric score: a pass/fail compliance checklist.
 Needs `035_scorecards.sql` and its own deploy (`supabase functions deploy
 score-scorecard`); it reuses `ANTHROPIC_API_KEY`.

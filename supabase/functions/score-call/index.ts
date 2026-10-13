@@ -292,6 +292,18 @@ Deno.serve(async req => {
         `dental/vision/hearing, hospital indemnity, or critical illness. Do not apply Medicare-specific ` +
         `criteria or compliance rules (provider/network checks, prescription discovery, scope of ` +
         `appointment, the "not every plan" disclaimer) to this call — they do not apply to this product.`
+      : rec.call_type === 'medicare_ancillary'
+      ? `
+
+This call is tagged as a combined Medicare and ancillary call: the agent sold a Medicare ` +
+        `plan and an ancillary (non-Medicare) product on the same call — e.g. final expense, ` +
+        `dental/vision/hearing, hospital indemnity, or critical illness. The Medicare portion is graded ` +
+        `separately against its own scorecard. Grade ONLY the ancillary portion here: base every ` +
+        `dimension score, finding, strength, improvement, and the summary on how the agent handled the ` +
+        `ancillary product, and draw evidence quotes from that part of the call. Do not apply ` +
+        `Medicare-specific criteria or compliance rules (provider/network checks, prescription ` +
+        `discovery, scope of appointment, the "not every plan" disclaimer), and do not mark the agent ` +
+        `down or up for anything in the Medicare portion.`
       : '';
 
     const anthropic = new Anthropic({ apiKey: Deno.env.get('ANTHROPIC_API_KEY')! });
