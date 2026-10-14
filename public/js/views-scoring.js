@@ -5,12 +5,12 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=63';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, showsRubricScore } from './config.js?v=63';
+import * as db from './db.js?v=64';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, showsRubricScore } from './config.js?v=64';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
-  toast, statTile, barRow, empty, spinner, selectField, loadPdfMake, loadJSZip, downloadBlob,
-} from './ui.js?v=63';
+  toast, statTile, barRow, empty, spinner, selectField, loadPdfMake, pdfSafe, loadJSZip, downloadBlob,
+} from './ui.js?v=64';
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -788,7 +788,7 @@ export async function reviewDetail(main, ctx, recordingId) {
         const baseName = `${score?.is_overridden ? 'coaching-report' : 'call-report'}-${agentSlug}-${rec.call_on}`;
         const pdfBlob = await new Promise((resolve, reject) => {
           try {
-            window.pdfMake.createPdf(docDefinition).getBlob(resolve);
+            window.pdfMake.createPdf(pdfSafe(docDefinition)).getBlob(resolve);
           } catch (err) { reject(err); }
         });
 
@@ -1193,7 +1193,7 @@ function openScorecardReport({ rec, card, aiOf, finalOf, changed, noteOf, isAdmi
         rec, card, rows, total, fullPoints, naItems, naPoints, aiOf, finalOf, changed, noteOf, isAdmin,
       });
       const blob = await new Promise((resolve, reject) => {
-        try { window.pdfMake.createPdf(doc).getBlob(resolve); } catch (err) { reject(err); }
+        try { window.pdfMake.createPdf(pdfSafe(doc)).getBlob(resolve); } catch (err) { reject(err); }
       });
       downloadBlob(blob, `rubric-report-${agentSlug}-${rec.call_on}.pdf`);
     } catch (err) {
@@ -1260,14 +1260,16 @@ function scorecardReportContent({
   const num = (text, extra = {}) => ({ ...extra, text: String(text), alignment: 'right' });
   const label = text => ({ text: text.toUpperCase(), fontSize: 7, bold: true, color: '#888888', margin: [0, 5, 0, 1] });
 
+  // Labelled lines rather than one line joined with dots: this report goes
+  // to agents as a training aid and should read as plain text.
   const infoLine = [
-    agentName,
-    fmtDate(rec.call_on),
-    rec.title || null,
+    `Agent: ${agentName}`,
+    `Call date: ${fmtDate(rec.call_on)}`,
+    rec.title ? `Call: ${rec.title}` : null,
     rec.team?.name ? `Agency Assigned: ${rec.team.name}` : null,
     rec.script?.name ? `Script: ${rec.script.name}` : null,
-    `${card.name}, version ${card.version}`,
-  ].filter(Boolean).join('  ·  ');
+    `Scorecard: ${card.name}, version ${card.version}`,
+  ].filter(Boolean).join('\n');
 
   const scored = t => (t.possible ? `${fmtNum(t.earned)} / ${fmtNum(t.possible)}` : 'N/A');
   const band = total.percent == null ? ['#444444', '#f0f0f0']
@@ -1294,7 +1296,7 @@ function scorecardReportContent({
           stack: [
             { text: 'Total score', fontSize: 9, color: '#555555' },
             {
-              text: total.possible ? `${fmtNum(total.earned)} of ${fmtNum(total.possible)} points  ·  ${total.percent}%` : 'Nothing applicable',
+              text: total.possible ? `${fmtNum(total.earned)} of ${fmtNum(total.possible)} points (${total.percent}%)` : 'Nothing applicable',
               fontSize: 20, bold: true, color: band[0], margin: [0, 3, 0, 3],
             },
             ...(result ? [{
@@ -1329,13 +1331,13 @@ function scorecardReportContent({
           ...rows.map(r => [
             `${r.section.section_number}. ${r.section.section_name}`,
             num(fmtNum(r.available)),
-            num(r.na ? fmtNum(r.na) : '—'),
+            num(fmtNum(r.na)),
             num(scored(r.tally), { bold: true }),
           ]),
           [
             { text: 'Total', bold: true },
             num(fmtNum(fullPoints), { bold: true }),
-            num(naPoints ? fmtNum(naPoints) : '—', { bold: true }),
+            num(fmtNum(naPoints), { bold: true }),
             num(scored(total), { bold: true }),
           ],
         ],
@@ -1351,8 +1353,8 @@ function scorecardReportContent({
         {
           width: 'auto', fontSize: 10, bold: true, margin: [0, 3, 0, 0],
           text: r.tally.possible
-            ? `Scored ${fmtNum(r.tally.earned)} of ${pts(r.tally.possible)}${r.na ? `  ·  ${pts(r.na)} N/A` : ''}`
-            : `N/A  ·  ${pts(r.available)} not counted`,
+            ? `Scored ${fmtNum(r.tally.earned)} of ${pts(r.tally.possible)}${r.na ? `, ${pts(r.na)} N/A` : ''}`
+            : `N/A, ${pts(r.available)} not counted`,
         },
       ],
       margin: [0, 18, 0, 6],
@@ -1400,7 +1402,7 @@ function scorecardReportContent({
             return [
               { stack: [
                 { text: [{ text: `${item.id}  `, bold: true }, clean(item.question)], fontSize: 9 },
-                { text: `${item.weight} · worth ${pts(item.points)}`, fontSize: 7, color: '#888888', margin: [0, 2, 0, 0] },
+                { text: `${item.weight}, worth ${pts(item.points)}`, fontSize: 7, color: '#888888', margin: [0, 2, 0, 0] },
               ] },
               { stack: result },
               { stack: details },
@@ -1413,7 +1415,7 @@ function scorecardReportContent({
   }
 
   content.push({
-    text: `Generated ${fmtDate(new Date().toISOString())}  ·  N/A items are left out of the score.`,
+    text: `Generated ${fmtDate(new Date().toISOString())}. N/A items are left out of the score.`,
     fontSize: 8,
     color: '#666666',
     margin: [0, 24, 0, 0],

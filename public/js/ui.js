@@ -2,7 +2,7 @@
 // Rendering helpers: formatting, date ranges, and the small set of chart
 // primitives the dashboard needs (stat tile, meter, bar row).
 // ---------------------------------------------------------------------------
-import { TIMEZONE, STATUSES, APPT_STATUSES } from './config.js?v=63';
+import { TIMEZONE, STATUSES, APPT_STATUSES } from './config.js?v=64';
 
 /* --- escaping ------------------------------------------------------------ */
 // Every value that reaches innerHTML goes through this. Client names and notes
@@ -302,6 +302,48 @@ export function loadPdfMake() {
     document.head.appendChild(core);
   });
   return pdfMakeReady;
+}
+
+/* pdfmake's embedded Roboto draws Latin, Greek, Cyrillic and ordinary
+   punctuation and nothing else. A check mark, arrow, emoji or box shape
+   prints as an empty box or garbage, and those turn up in the AI's grading
+   notes and in transcripts. Every string in a document definition goes
+   through pdfSafeText on the way to createPdf: symbols with a plain
+   equivalent are swapped for it, anything else the font cannot draw is
+   dropped. The allowed set below is the font's own coverage. */
+const PDF_SWAPS = [
+  [/[\u2713\u2714\u2705\u2611\u2717\u2718\u2715\u2716\u274C\u274E]\uFE0F?\s*/gu, ''],
+  [/[\u2192\u27A1\u279C\u2794\u21D2\u27F6]/gu, '->'],
+  [/[\u2190\u2B05\u21D0\u27F5]/gu, '<-'],
+  [/[\u2194\u21D4]/gu, '<->'],
+  [/[\u26A0\u2757\u2755]\uFE0F?/gu, '!'],
+  [/[\u2605\u2606\u2B50]/gu, '*'],
+  [/[\u25CF\u25CB\u25AA\u25AB\u25A0\u25A1\u25C6\u25C7\u25B6\u25BA\u25B8\u27A4\u2043\u2219\u25E6]/gu, '\u2022'],
+  [/\u00D7/gu, 'x'],
+  [/\r\n?/g, '\n'],
+  [/\t/g, ' '],
+  // Markdown emphasis from the model: the asterisks would print literally.
+  [/\*\*(.+?)\*\*/g, '$1'],
+  [/\*\*/g, ''],
+];
+const PDF_UNDRAWABLE = /[^\n -~\u00A0-\u017F\u0384-\u03CE\u0400-\u0486\u0488-\u0513\u2010\u2011\u2013-\u2015\u2017-\u201E\u2020-\u2022\u2025-\u2027\u2030\u2032\u2033\u2039\u203A\u20AC\u2122\u2248\u2260\u2264\u2265]/gu;
+export function pdfSafeText(s) {
+  let out = String(s);
+  for (const [re, to] of PDF_SWAPS) out = out.replace(re, to);
+  return out.replace(PDF_UNDRAWABLE, '').replace(/[ \u00A0]{2,}/g, m => m.slice(0, 2));
+}
+// Walks a pdfmake document definition and cleans the text in it: `text`
+// values, and strings standing alone in content/stack/table cells. Styling
+// strings (colors, widths, layout names) are ASCII and left as they are.
+export function pdfSafe(node, key = null, inArray = false) {
+  if (typeof node === 'string') return key === 'text' || key === 'title' || inArray ? pdfSafeText(node) : node;
+  if (Array.isArray(node)) return node.map(n => pdfSafe(n, null, true));
+  if (node && typeof node === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(node)) out[k] = typeof v === 'function' ? v : pdfSafe(v, k);
+    return out;
+  }
+  return node;
 }
 
 /* --- zip bundling ----------------------------------------------------------
