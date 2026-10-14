@@ -5,12 +5,12 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=62';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, showsRubricScore } from './config.js?v=62';
+import * as db from './db.js?v=63';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, showsRubricScore } from './config.js?v=63';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
   toast, statTile, barRow, empty, spinner, selectField, loadPdfMake, loadJSZip, downloadBlob,
-} from './ui.js?v=62';
+} from './ui.js?v=63';
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -1030,6 +1030,15 @@ function scorecardTally(items, verdictOf) {
   }
   return { earned, possible, percent: possible ? Math.round(1000 * earned / possible) / 10 : null };
 }
+// The scorecard's pass mark, on the percentage of applicable points earned.
+const SC_PASS_PERCENT = 85;
+// 'pass' | 'fail', or null for a call where no item applied.
+const scResult = t => (t.possible ? (t.percent >= SC_PASS_PERCENT ? 'pass' : 'fail') : null);
+const scResultChip = t => {
+  const r = scResult(t);
+  return r ? `<span style="color:var(--${r === 'pass' ? 'good' : 'critical'});margin-left:10px">${r === 'pass' ? 'PASS' : 'FAIL'}</span>` : '';
+};
+const SC_PASS_RULE = `${SC_PASS_PERCENT}% or higher is a Pass. Below ${SC_PASS_PERCENT}% is a Fail.`;
 const scTallyText = t => t.possible ? `${t.earned}/${t.possible} · ${t.percent}%` : 'Nothing applicable';
 
 // "Detailed call rubric report": the whole scorecard for one graded call in a
@@ -1129,8 +1138,9 @@ function openScorecardReport({ rec, card, aiOf, finalOf, changed, noteOf, isAdmi
       </p>
       <div class="field">
         <span class="muted">Total score</span>
-        <strong style="font-size:26px">${total.possible ? `${fmtNum(total.earned)} of ${fmtNum(total.possible)} points · ${total.percent}%` : 'Nothing applicable'}</strong>
+        <strong style="font-size:26px">${total.possible ? `${fmtNum(total.earned)} of ${fmtNum(total.possible)} points · ${total.percent}%` : 'Nothing applicable'}${scResultChip(total)}</strong>
         <span class="muted" style="font-size:13px;display:block">
+          ${SC_PASS_RULE}
           The scorecard totals ${esc(pts(fullPoints))}.
           ${naItems.length
             ? `${fmtNum(naItems.length)} item${naItems.length === 1 ? '' : 's'} worth ${esc(pts(naPoints))} did not apply to this call and ${naItems.length === 1 ? 'is' : 'are'} left out of the score.`
@@ -1261,8 +1271,8 @@ function scorecardReportContent({
 
   const scored = t => (t.possible ? `${fmtNum(t.earned)} / ${fmtNum(t.possible)}` : 'N/A');
   const band = total.percent == null ? ['#444444', '#f0f0f0']
-    : total.percent >= 80 ? ['#146c46', '#e8f7ee']
-    : total.percent >= 70 ? ['#8a6508', '#fff6e0'] : ['#96281d', '#fdeceb'];
+    : total.percent >= SC_PASS_PERCENT ? ['#146c46', '#e8f7ee'] : ['#96281d', '#fdeceb'];
+  const result = scResult(total);
 
   const content = [
     ...(appended ? [] : [
@@ -1287,6 +1297,13 @@ function scorecardReportContent({
               text: total.possible ? `${fmtNum(total.earned)} of ${fmtNum(total.possible)} points  ·  ${total.percent}%` : 'Nothing applicable',
               fontSize: 20, bold: true, color: band[0], margin: [0, 3, 0, 3],
             },
+            ...(result ? [{
+              text: [
+                { text: `RESULT: ${result === 'pass' ? 'PASS' : 'FAIL'}`, bold: true, fontSize: 14, color: band[0] },
+                { text: `   ${SC_PASS_RULE}`, fontSize: 8, color: '#666666' },
+              ],
+              margin: [0, 0, 0, 4],
+            }] : []),
             {
               text: `The scorecard totals ${pts(fullPoints)}. ` + (naItems.length
                 ? `${fmtNum(naItems.length)} item${naItems.length === 1 ? '' : 's'} worth ${pts(naPoints)} did not apply to this call and ${naItems.length === 1 ? 'is' : 'are'} left out of the score.`
@@ -1566,7 +1583,8 @@ async function drawScorecard(rec, ctx, turns, jumpToTurn = () => {}) {
         <div class="grid-2">
           <div class="field">
             <span class="muted">${reviewed ? 'Reviewed score' : 'Score'}</span>
-            <strong style="font-size:22px">${esc(scTallyText(final))}</strong>
+            <strong style="font-size:22px">${esc(scTallyText(final))}${scResultChip(final)}</strong>
+            <span class="muted" style="font-size:12px;display:block">${SC_PASS_RULE}</span>
             ${reviewed ? `<span class="muted" style="font-size:12px;display:block">Model graded ${esc(scTallyText({ earned: grade.earned, possible: grade.possible, percent: Number(grade.percent) }))}</span>` : ''}
           </div>
           ${isAdmin ? `
