@@ -11,7 +11,7 @@
 // an unauthenticated empty array reach the UI.
 // ---------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=64';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=65';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true },
@@ -271,7 +271,8 @@ export async function agentScoreRoster({ bucket, teamId } = {}) {
 // call_scores embeds every score row this recording has ever had, not just
 // the current one (re-scoring adds a row rather than replacing it — see
 // migration 031) — the list view picks the latest by created_at itself,
-// the same resolution call_scores_effective does server-side.
+// the same resolution call_scores_effective does server-side. call_scorecards
+// is embedded the same way, for the Medicare grade in the list's Score column.
 const RECORDING_COLS =
   'id, agent_id, agent_name, uploaded_by, title, call_on, duration_seconds, storage_path, ' +
   'transcript_source, status, error_message, created_at, script_id, call_type, team_id, ' +
@@ -279,7 +280,8 @@ const RECORDING_COLS =
   'agent:profiles!call_recordings_agent_id_fkey(full_name), script:scripts(name), ' +
   'team:teams(name), ' +
   'reviewer:profiles!call_recordings_reviewer_approved_by_fkey(full_name), ' +
-  'call_scores(overall_score, manual_overall_score, is_overridden, created_at)';
+  'call_scores(overall_score, manual_overall_score, is_overridden, created_at), ' +
+  'call_scorecards(percent, possible, manual_percent, manual_possible, created_at)';
 
 // Deliberately omits `transcript`. A list of 50 calls would otherwise pull
 // 50 full transcripts over the wire to render 50 table rows.

@@ -5,12 +5,12 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=64';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, showsRubricScore } from './config.js?v=64';
+import * as db from './db.js?v=65';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, showsRubricScore } from './config.js?v=65';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
   toast, statTile, barRow, empty, spinner, selectField, loadPdfMake, pdfSafe, loadJSZip, downloadBlob,
-} from './ui.js?v=64';
+} from './ui.js?v=65';
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -230,6 +230,35 @@ function effectiveScoreFor(rec) {
   if (!Array.isArray(scores) || scores.length === 0) return null;
   const latest = scores.reduce((a, b) => (new Date(b.created_at) > new Date(a.created_at) ? b : a));
   return latest.is_overridden ? latest.manual_overall_score : latest.overall_score;
+}
+
+// The latest scorecard grade for a Medicare call, reviewer's regrade winning
+// over the model's — the same resolution the call page makes. Shown in the
+// list only once the call is approved: until then the grade is still being
+// checked, and a number in the list would read as final.
+function approvedScorecardFor(rec) {
+  if (!rec.reviewer_approved || !['medicare', 'medicare_ancillary'].includes(rec.call_type)) return null;
+  const grades = rec.call_scorecards;
+  if (!Array.isArray(grades) || grades.length === 0) return null;
+  const latest = grades.reduce((a, b) => (new Date(b.created_at) > new Date(a.created_at) ? b : a));
+  const reviewed = latest.manual_possible != null;
+  const possible = reviewed ? latest.manual_possible : latest.possible;
+  const percent = reviewed ? latest.manual_percent : latest.percent;
+  return possible ? { percent: Number(percent), possible } : null;
+}
+
+// Score cell for the list: the rubric score, the approved scorecard grade
+// with its Pass/Fail, or both on a Medicare + Ancillary call.
+function listScoreCellHtml(rec) {
+  const rubric = effectiveScoreFor(rec);
+  const sc = approvedScorecardFor(rec);
+  const parts = [];
+  if (rubric != null) parts.push(esc(rubric));
+  if (sc) {
+    const pass = sc.percent >= SC_PASS_PERCENT;
+    parts.push(`${esc(sc.percent)}%<br><span class="chip chip--${pass ? 'good' : 'critical'}">${pass ? 'PASS' : 'FAIL'}</span>`);
+  }
+  return parts.length ? parts.join('<br>') : '—';
 }
 
 /* === Review list ========================================================== */
@@ -488,14 +517,13 @@ export async function reviews(main, ctx) {
           // fails against a rule the button should have hidden for.
           const canEdit = isAdmin || (r.uploaded_by === ctx.profile.id && ['uploaded', 'transcribed', 'failed'].includes(r.status));
           const canDelete = isAdmin || r.uploaded_by === ctx.profile.id;
-          const score = effectiveScoreFor(r);
           return `
           <tr data-id="${esc(r.id)}">
             <td class="tnum">${esc(fmtDate(r.call_on))}</td>
             <td>${esc(r.title || 'Untitled call')}${r.error_message
               ? `<br><span class="muted">${esc(r.error_message.slice(0, 80))}</span>` : ''}</td>
             <td>${esc(r.agent?.full_name || r.agent_name || '—')}${r.team?.name ? `<br><span class="muted">${esc(r.team.name)}</span>` : ''}</td>
-            <td class="num tnum">${score != null ? esc(score) : '—'}</td>
+            <td class="num tnum">${listScoreCellHtml(r)}</td>
             <td class="tnum muted">${esc(fmtDuration(r.duration_seconds))}</td>
             <td>${statusChipFor(r.status)}</td>
             <td>${reviewerStatusChip(r.reviewer_approved)}</td>
