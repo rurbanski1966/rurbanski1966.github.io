@@ -5,12 +5,12 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=65';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, showsRubricScore } from './config.js?v=65';
+import * as db from './db.js?v=66';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, showsRubricScore } from './config.js?v=66';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
   toast, statTile, barRow, empty, spinner, selectField, loadPdfMake, pdfSafe, loadJSZip, downloadBlob,
-} from './ui.js?v=65';
+} from './ui.js?v=66';
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -261,6 +261,42 @@ function listScoreCellHtml(rec) {
   return parts.length ? parts.join('<br>') : '—';
 }
 
+// Background work on a list row: automatic transcription (transcribe-call
+// webhook) and the automatic Medicare grade (score-scorecard webhook). Neither
+// writes a "grading" status anywhere, so "in progress" is inferred from time:
+// a Medicare call whose transcript landed in the last few minutes and has no
+// grade yet is taken to be grading. Past the window it is "Not graded" — the
+// webhook skipped it, failed, or isn't set up — and the button is the way in.
+const SC_GRADING_WINDOW_MS = 5 * 60 * 1000;
+const TRANSCRIBE_WINDOW_MS = 10 * 60 * 1000;
+const LIST_POLL_MS = 8000;
+const SCORECARD_CALL_TYPES = ['medicare', 'medicare_ancillary'];
+const HAS_TRANSCRIPT_STATUSES = ['transcribed', 'scoring', 'scored'];
+const ageMs = ts => Date.now() - new Date(ts).getTime();
+
+// 'graded' | 'grading' | 'not_graded', or null when the scorecard does not
+// apply to this row (not a Medicare call, or no transcript yet).
+function scorecardStateFor(rec) {
+  if (!SCORECARD_CALL_TYPES.includes(rec.call_type)) return null;
+  if (!HAS_TRANSCRIPT_STATUSES.includes(rec.status)) return null;
+  if (Array.isArray(rec.call_scorecards) && rec.call_scorecards.length) return 'graded';
+  return ageMs(rec.updated_at || rec.created_at) < SC_GRADING_WINDOW_MS ? 'grading' : 'not_graded';
+}
+
+const scorecardStateChip = state => ({
+  graded: `<span class="chip chip--good"><span aria-hidden="true">✓</span>Graded</span>`,
+  grading: `<span class="chip chip--warning"><span aria-hidden="true">◷</span>Grading…</span>`,
+  not_graded: `<span class="muted" style="font-size:12px">Not graded</span>`,
+}[state] ?? '');
+
+// Whether this row is waiting on something that will change it without the
+// user doing anything — the list keeps refreshing while any row is.
+function rowInProgress(rec) {
+  if (['transcribing', 'scoring'].includes(rec.status)) return true;
+  if (rec.status === 'uploaded' && rec.storage_path && ageMs(rec.created_at) < TRANSCRIBE_WINDOW_MS) return true;
+  return scorecardStateFor(rec) === 'grading';
+}
+
 /* === Review list ========================================================== */
 export async function reviews(main, ctx) {
   const isAdmin = ctx.profile.role === 'admin';
@@ -486,8 +522,13 @@ export async function reviews(main, ctx) {
     });
   }
 
-  async function draw() {
-    list.innerHTML = spinner();
+  // One pending refresh at a time. Cleared on every draw and simply not
+  // re-armed once the list has left the page (navigated away).
+  let pollTimer = null;
+
+  async function draw({ quiet = false } = {}) {
+    clearTimeout(pollTimer);
+    if (!quiet) list.innerHTML = spinner();
     const filter = isAdmin ? document.getElementById('agent-filter').value : '';
     const [kind, value] = filter.split(/:(.*)/s);
     const rows = await db.listRecordings({
@@ -525,7 +566,7 @@ export async function reviews(main, ctx) {
             <td>${esc(r.agent?.full_name || r.agent_name || '—')}${r.team?.name ? `<br><span class="muted">${esc(r.team.name)}</span>` : ''}</td>
             <td class="num tnum">${listScoreCellHtml(r)}</td>
             <td class="tnum muted">${esc(fmtDuration(r.duration_seconds))}</td>
-            <td>${statusChipFor(r.status)}</td>
+            <td>${statusChipFor(r.status)}${scorecardStateFor(r) ? `<br>${scorecardStateChip(scorecardStateFor(r))}` : ''}</td>
             <td>${reviewerStatusChip(r.reviewer_approved)}</td>
             <td style="display:flex;gap:6px;flex-wrap:wrap">
               <a class="btn btn--ghost btn--sm" href="#/reviews/${esc(r.id)}">Open</a>
@@ -555,6 +596,10 @@ export async function reviews(main, ctx) {
         }
       });
     });
+
+    if (rows.some(rowInProgress)) {
+      pollTimer = setTimeout(() => { if (list.isConnected) draw({ quiet: true }); }, LIST_POLL_MS);
+    }
   }
 
   /* --- edit --- */
