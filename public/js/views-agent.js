@@ -2,12 +2,12 @@
 // Agent-facing views: dashboard, my sales.
 // Every view exports render(main, ctx) and wires its own listeners.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=67';
-import { CATEGORIES } from './config.js?v=67';
+import * as db from './db.js?v=68';
+import { CATEGORIES } from './config.js?v=68';
 import {
   esc, fmtMoneyExact, fmtNum, fmtDate,
   toast, statTile, statusChip, empty, spinner, selectField,
-} from './ui.js?v=67';
+} from './ui.js?v=68';
 
 const SERIES = {
   mapd:      'var(--series-1)',
@@ -49,9 +49,11 @@ export async function dashboard(main, ctx) {
         ${statTile({ label: 'SMC Daily spend', value: fmtMoneyExact(m.smc_daily_spend), note: "SMC calls, today" })}
         ${statTile({ label: 'SMC Weekly spend', value: fmtMoneyExact(m.smc_weekly_spend), note: 'SMC calls, Monday–Sunday' })}
         ${statTile({ label: 'SMC Monthly spend', value: fmtMoneyExact(m.smc_monthly_spend), note: 'SMC calls, this month' })}
+        ${statTile({ label: 'SMC Yearly spend', value: fmtMoneyExact(m.smc_yearly_spend), note: 'SMC calls, year to date' })}
         ${statTile({ label: 'EWSS Daily spend', value: fmtMoneyExact(m.ewss_daily_spend), note: "EWSS calls, today" })}
         ${statTile({ label: 'EWSS Weekly spend', value: fmtMoneyExact(m.ewss_weekly_spend), note: 'EWSS calls, Monday–Sunday' })}
         ${statTile({ label: 'EWSS Monthly spend', value: fmtMoneyExact(m.ewss_monthly_spend), note: 'EWSS calls, this month' })}
+        ${statTile({ label: 'EWSS Yearly spend', value: fmtMoneyExact(m.ewss_yearly_spend), note: 'EWSS calls, year to date' })}
       </div>
       ${unassignedTilesHtml(m)}
       <p class="muted" style="font-size:12px;margin:4px 0 0">
@@ -82,7 +84,7 @@ export async function dashboard(main, ctx) {
 
 // Spend that belongs to neither SMC nor EWSS. Shown only when there is some,
 // as a prompt to fix it: every cost is meant to land in one of the two.
-const hasUnassigned = m => [m.unassigned_daily_spend, m.unassigned_weekly_spend, m.unassigned_monthly_spend]
+const hasUnassigned = m => [m.unassigned_daily_spend, m.unassigned_weekly_spend, m.unassigned_monthly_spend, m.unassigned_yearly_spend]
   .some(v => Number(v) > 0);
 
 function unassignedTilesHtml(m) {
@@ -92,6 +94,7 @@ function unassignedTilesHtml(m) {
       ${statTile({ label: 'Unassigned Daily spend', value: fmtMoneyExact(m.unassigned_daily_spend), note: 'No agency set — not in SMC or EWSS' })}
       ${statTile({ label: 'Unassigned Weekly spend', value: fmtMoneyExact(m.unassigned_weekly_spend), note: 'No agency set — not in SMC or EWSS' })}
       ${statTile({ label: 'Unassigned Monthly spend', value: fmtMoneyExact(m.unassigned_monthly_spend), note: 'No agency set — not in SMC or EWSS' })}
+      ${statTile({ label: 'Unassigned Yearly spend', value: fmtMoneyExact(m.unassigned_yearly_spend), note: 'No agency set — not in SMC or EWSS' })}
     </div>`;
 }
 
