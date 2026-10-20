@@ -11,7 +11,7 @@
 // an unauthenticated empty array reach the UI.
 // ---------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=66';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=67';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true },
@@ -229,6 +229,7 @@ export async function myMetrics() {
       monthly_spend: 0, smc_monthly_spend: 0, ewss_monthly_spend: 0, yearly_spend: 0,
       month_ap: 0, pace: 0, target_ap: 0,
       days_elapsed: 0, days_in_month: 0, month_count: 0, pending_count: 0,
+      unassigned_daily_spend: 0, unassigned_weekly_spend: 0, unassigned_monthly_spend: 0,
     }
   );
 }
@@ -241,6 +242,17 @@ export async function adminReport(start, end) {
 export async function agentSpendReport() {
   await requireSession();
   return unwrap(await supabase.rpc('agent_spend_report'));
+}
+
+// Calls whose AI cost is in neither SMC nor EWSS: no Agency Assigned and an
+// agent with no team (migration 039). Admin-only; empty for anyone else.
+// Before migration 039 has run the function doesn't exist; the Dashboard
+// shows no list rather than failing to load.
+export async function unassignedCostCalls() {
+  await requireSession();
+  const { data, error } = await supabase.rpc('unassigned_cost_calls');
+  if (error) { console.warn('unassigned_cost_calls:', error.message); return []; }
+  return data ?? [];
 }
 
 /* --- analytics ------------------------------------------------------------ */

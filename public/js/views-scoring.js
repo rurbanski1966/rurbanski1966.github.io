@@ -5,12 +5,12 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=66';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, showsRubricScore } from './config.js?v=66';
+import * as db from './db.js?v=67';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, showsRubricScore } from './config.js?v=67';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
   toast, statTile, barRow, empty, spinner, selectField, loadPdfMake, pdfSafe, loadJSZip, downloadBlob,
-} from './ui.js?v=66';
+} from './ui.js?v=67';
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -322,6 +322,13 @@ export async function reviews(main, ctx) {
   const activePeople = people.filter(p => p.active);
   const nameToId = new Map(activePeople.map(p => [(p.full_name || p.email).trim().toLowerCase(), p.id]));
 
+  // Every call's AI cost is reported under SMC or EWSS: its Agency Assigned,
+  // else its agent's own team (migration 039). A call with neither would
+  // land in Unassigned, so the form asks for one before saving.
+  const teamOfAgent = new Map(people.map(p => [p.id, p.team_id]));
+  const NEEDS_TEAM_MSG = "Set Agency Assigned to SMC or EWSS. This agent has no team, so the call's costs wouldn't be counted under either.";
+  const agentTeamFor = agentId => (agentId ? (isAdmin ? teamOfAgent.get(agentId) : ctx.profile.team_id) : null);
+
   /* --- new recording --- */
   const newCard = document.getElementById('new');
   newCard.innerHTML = `
@@ -371,7 +378,7 @@ export async function reviews(main, ctx) {
           ${teams.map(t => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}
         </select>
         <span class="muted" style="font-size:12px">
-          Attributes this call to EWSS or SMC on the leaderboard and spend totals. Leave blank to use the agent's own team.
+          Attributes this call to EWSS or SMC on the leaderboard and spend totals. Leave blank to use the agent's own team; required if the agent has none.
         </span>
       </label>
 
@@ -460,6 +467,7 @@ export async function reviews(main, ctx) {
       const matchedId = nameToId.get(typed.toLowerCase());
       if (matchedId) { agentId = matchedId; } else { agentId = null; agentName = typed; }
     }
+    if (!val('team_id') && !agentTeamFor(agentId)) return toast(NEEDS_TEAM_MSG, 'error');
 
     const btn = newCard.querySelector('#rec-save');
     btn.disabled = true;
@@ -677,6 +685,7 @@ export async function reviews(main, ctx) {
         patch.agent_id = matchedId || null;
         patch.agent_name = matchedId ? null : typed;
       }
+      if (!patch.team_id && !agentTeamFor(isAdmin ? patch.agent_id : row.agent_id)) return toast(NEEDS_TEAM_MSG, 'error');
 
       const btn = editCard.querySelector('#ed-save');
       btn.disabled = true;

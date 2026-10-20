@@ -2,12 +2,12 @@
 // Agent-facing views: dashboard, my sales.
 // Every view exports render(main, ctx) and wires its own listeners.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=66';
-import { CATEGORIES } from './config.js?v=66';
+import * as db from './db.js?v=67';
+import { CATEGORIES } from './config.js?v=67';
 import {
   esc, fmtMoneyExact, fmtNum, fmtDate,
   toast, statTile, statusChip, empty, spinner, selectField,
-} from './ui.js?v=66';
+} from './ui.js?v=67';
 
 const SERIES = {
   mapd:      'var(--series-1)',
@@ -30,27 +30,34 @@ export async function dashboard(main, ctx) {
     <div class="card" id="recent">${spinner()}</div>
     ${isAdmin ? `<div class="card" id="agent-spend">${spinner()}</div>` : ''}`;
 
-  const [m, mine, agentSpend] = await Promise.all([
+  const [m, mine, agentSpend, unassignedCalls] = await Promise.all([
     db.myMetrics(),
     db.mySubmissions({ limit: 8 }),
     isAdmin ? db.agentSpendReport() : Promise.resolve(null),
+    isAdmin ? db.unassignedCostCalls() : Promise.resolve([]),
   ]);
 
   document.getElementById('kpis').outerHTML = `
     <div id="kpis">
       <div class="kpis">
-        ${statTile({ label: 'Daily spend', value: fmtMoneyExact(m.daily_spend), note: "AI grading cost, today's calls" })}
-        ${statTile({ label: 'Weekly spend', value: fmtMoneyExact(m.weekly_spend), note: 'AI grading cost, Monday–Sunday' })}
-        ${statTile({ label: 'Yearly spend', value: fmtMoneyExact(m.yearly_spend), note: 'AI grading + review costs, this year' })}
+        ${statTile({ label: 'Daily spend', value: fmtMoneyExact(m.daily_spend), note: 'All AI costs, today' })}
+        ${statTile({ label: 'Weekly spend', value: fmtMoneyExact(m.weekly_spend), note: 'All AI costs, Monday–Sunday' })}
+        ${statTile({ label: 'Monthly spend', value: fmtMoneyExact(m.monthly_spend), note: 'All AI costs, this month' })}
+        ${statTile({ label: 'Yearly spend', value: fmtMoneyExact(m.yearly_spend), note: 'All AI costs, this year' })}
       </div>
       <div class="kpis">
-        ${statTile({ label: 'SMC Daily spend', value: fmtMoneyExact(m.smc_daily_spend), note: "AI grading + review costs, today's SMC calls" })}
-        ${statTile({ label: 'SMC Weekly spend', value: fmtMoneyExact(m.smc_weekly_spend), note: 'AI grading + review costs, SMC calls Monday–Sunday' })}
-        ${statTile({ label: 'SMC Monthly spend', value: fmtMoneyExact(m.smc_monthly_spend), note: 'AI grading + review costs, SMC calls this month' })}
-        ${statTile({ label: 'EWSS Daily spend', value: fmtMoneyExact(m.ewss_daily_spend), note: "AI grading + review costs, today's EWSS calls" })}
-        ${statTile({ label: 'EWSS Weekly spend', value: fmtMoneyExact(m.ewss_weekly_spend), note: 'AI grading + review costs, EWSS calls Monday–Sunday' })}
-        ${statTile({ label: 'EWSS Monthly spend', value: fmtMoneyExact(m.ewss_monthly_spend), note: 'AI grading + review costs, EWSS calls this month' })}
+        ${statTile({ label: 'SMC Daily spend', value: fmtMoneyExact(m.smc_daily_spend), note: "SMC calls, today" })}
+        ${statTile({ label: 'SMC Weekly spend', value: fmtMoneyExact(m.smc_weekly_spend), note: 'SMC calls, Monday–Sunday' })}
+        ${statTile({ label: 'SMC Monthly spend', value: fmtMoneyExact(m.smc_monthly_spend), note: 'SMC calls, this month' })}
+        ${statTile({ label: 'EWSS Daily spend', value: fmtMoneyExact(m.ewss_daily_spend), note: "EWSS calls, today" })}
+        ${statTile({ label: 'EWSS Weekly spend', value: fmtMoneyExact(m.ewss_weekly_spend), note: 'EWSS calls, Monday–Sunday' })}
+        ${statTile({ label: 'EWSS Monthly spend', value: fmtMoneyExact(m.ewss_monthly_spend), note: 'EWSS calls, this month' })}
       </div>
+      ${unassignedTilesHtml(m)}
+      <p class="muted" style="font-size:12px;margin:4px 0 0">
+        AI costs = coaching-rubric scoring, Medicare scorecard grading, and AI review summaries. A call's cost goes to its
+        Agency Assigned, or the agent's own team if none was set. Transcription isn't tracked per call.
+      </p>
     </div>`;
 
   const recent = document.getElementById('recent');
@@ -70,6 +77,50 @@ export async function dashboard(main, ctx) {
         </table></div>`}`;
 
   if (isAdmin) drawAgentSpend(agentSpend);
+  if (isAdmin && unassignedCalls.length) drawUnassignedCalls(unassignedCalls);
+}
+
+// Spend that belongs to neither SMC nor EWSS. Shown only when there is some,
+// as a prompt to fix it: every cost is meant to land in one of the two.
+const hasUnassigned = m => [m.unassigned_daily_spend, m.unassigned_weekly_spend, m.unassigned_monthly_spend]
+  .some(v => Number(v) > 0);
+
+function unassignedTilesHtml(m) {
+  if (!hasUnassigned(m)) return '';
+  return `
+    <div class="kpis">
+      ${statTile({ label: 'Unassigned Daily spend', value: fmtMoneyExact(m.unassigned_daily_spend), note: 'No agency set — not in SMC or EWSS' })}
+      ${statTile({ label: 'Unassigned Weekly spend', value: fmtMoneyExact(m.unassigned_weekly_spend), note: 'No agency set — not in SMC or EWSS' })}
+      ${statTile({ label: 'Unassigned Monthly spend', value: fmtMoneyExact(m.unassigned_monthly_spend), note: 'No agency set — not in SMC or EWSS' })}
+    </div>`;
+}
+
+// The calls behind the Unassigned figure. Setting Agency Assigned on each
+// (Call reviews → Edit) moves its cost into SMC or EWSS everywhere at once.
+function drawUnassignedCalls(rows) {
+  document.getElementById('agent-spend').insertAdjacentHTML('beforebegin', `
+    <div class="card" id="unassigned-costs">
+      <div class="card__head">
+        <h2>Costs not assigned to SMC or EWSS</h2>
+        <span class="muted">${fmtNum(rows.length)} call${rows.length === 1 ? '' : 's'}</span>
+      </div>
+      <p class="muted" style="margin:0 0 12px">
+        These calls have no Agency Assigned and their agent has no team, so their cost isn't in either category.
+        Open each one on Call reviews, click Edit, and set Agency Assigned.
+      </p>
+      <div class="tablewrap"><table>
+        <thead><tr><th>Date</th><th>Call</th><th>Agent</th><th class="num">AI cost</th><th></th></tr></thead>
+        <tbody>${rows.map(r => `
+          <tr>
+            <td class="tnum">${esc(fmtDate(r.call_on))}</td>
+            <td>${esc(r.title || 'Untitled call')}</td>
+            <td>${esc(r.agent_name || '—')}</td>
+            <td class="num">${esc(fmtMoneyExact(r.total_cost))}</td>
+            <td><a class="btn btn--ghost btn--sm" href="#/reviews/${esc(r.recording_id)}">Open</a></td>
+          </tr>`).join('')}
+        </tbody>
+      </table></div>
+    </div>`);
 }
 
 // Per-agent breakdown of the same daily/weekly/monthly/yearly spend figures
