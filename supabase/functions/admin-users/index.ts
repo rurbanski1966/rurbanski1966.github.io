@@ -1,8 +1,9 @@
 // ---------------------------------------------------------------------------
 // admin-users — Supabase Edge Function (Deno)
 //
-// Creates and removes login accounts. This has to run server-side: setting an
-// admin-chosen password and deleting a user both go through the Auth Admin
+// Creates, edits and removes login accounts. This has to run server-side:
+// setting an admin-chosen password, changing a login email and deleting a
+// user all go through the Auth Admin
 // API, which only works with the service role key — the anon key the browser
 // holds can never do either.
 //
@@ -115,5 +116,63 @@ Deno.serve(async req => {
     return json({ ok: true });
   }
 
-  return json({ error: `Unknown action "${body.action}". Use "create" or "delete".` }, 400);
+  if (body.action === 'update') {
+    const userId = String(body.user_id ?? '');
+    if (!userId) return json({ error: 'user_id is required.' }, 400);
+
+    const fullName = String(body.full_name ?? '').trim();
+    const email = String(body.email ?? '').trim().toLowerCase();
+    const role = String(body.role ?? '');
+    const teamId = body.team_id ? String(body.team_id) : null;
+    // Optional: blank means "leave the password alone".
+    const password = body.password ? String(body.password) : '';
+
+    if (!fullName) return json({ error: 'Name is required.' }, 400);
+    if (!email.includes('@')) return json({ error: 'A valid email is required.' }, 400);
+    if (!ROLES.includes(role)) return json({ error: `Role must be one of: ${ROLES.join(', ')}` }, 400);
+    if (password && password.length < 8) return json({ error: 'New password must be at least 8 characters.' }, 400);
+
+    const { data: current, error: currentError } = await serviceClient
+      .from('profiles')
+      .select('id, email, role')
+      .eq('id', userId)
+      .maybeSingle();
+    if (currentError) return json({ error: currentError.message }, 400);
+    if (!current) return json({ error: 'Account not found.' }, 404);
+
+    // An admin demoting themselves could leave the agency with no admin.
+    if (userId === userData.user.id && role !== 'admin') {
+      return json({ error: 'You cannot change your own role.' }, 400);
+    }
+
+    if (teamId) {
+      const { data: team, error: teamError } = await serviceClient
+        .from('teams').select('id').eq('id', teamId).maybeSingle();
+      if (teamError) return json({ error: teamError.message }, 400);
+      if (!team) return json({ error: 'That team no longer exists.' }, 400);
+    }
+
+    // Login side first: if Auth rejects the email (already taken, say), the
+    // profile is left untouched instead of showing an email they can't sign
+    // in with.
+    const authPatch: Record<string, unknown> = { user_metadata: { full_name: fullName } };
+    if (email !== current.email) {
+      authPatch.email = email;
+      authPatch.email_confirm = true; // admin is setting it directly — no confirmation email
+    }
+    if (password) authPatch.password = password;
+
+    const { error: authError } = await serviceClient.auth.admin.updateUserById(userId, authPatch);
+    if (authError) return json({ error: authError.message }, 400);
+
+    const { error: profileError } = await serviceClient
+      .from('profiles')
+      .update({ full_name: fullName, email, role, team_id: teamId })
+      .eq('id', userId);
+    if (profileError) return json({ error: profileError.message }, 400);
+
+    return json({ ok: true, password_reset: Boolean(password) });
+  }
+
+  return json({ error: `Unknown action "${body.action}". Use "create", "update" or "delete".` }, 400);
 });

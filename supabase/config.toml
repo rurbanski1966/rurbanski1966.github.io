@@ -1,0 +1,8 @@
+# Read by `supabase functions deploy` in .github/workflows/deploy-functions.yml.
+# Every push under supabase/functions/ redeploys ALL functions, and a deploy
+# resets verify_jwt to the value here (default true) — so a dashboard toggle
+# alone would be undone by the next unrelated function change.
+
+# EnrollHere has no Supabase login; the function checks its own token.
+[functions.enrollhere-webhook]
+verify_jwt = false

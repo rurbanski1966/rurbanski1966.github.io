@@ -2,13 +2,13 @@
 // Admin portal: team management, all submissions, reporting.
 // Every view here assumes an admin profile; app.js gates the routes.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=68';
-import { STATUSES, ROLES } from './config.js?v=68';
+import * as db from './db.js?v=69';
+import { STATUSES, ROLES } from './config.js?v=69';
 import {
   esc, fmtMoney, fmtMoneyExact, fmtNum, fmtDate, range, RANGES, monthStart,
   toast, barRow, legend, empty, spinner, selectField,
-} from './ui.js?v=68';
-import { catLabel, SERIES } from './views-agent.js?v=68';
+} from './ui.js?v=69';
+import { catLabel, SERIES } from './views-agent.js?v=69';
 
 /* === Agents =============================================================== */
 // A temp password only has to clear Supabase's 8-char minimum and be easy to
@@ -155,14 +155,18 @@ export async function agents(main, ctx) {
             <td>
               <input type="checkbox" data-field="active"${p.active ? ' checked' : ''}>
             </td>
-            <td>
+            <td style="display:flex;gap:6px">
               ${p.id === ctx.profile.id
                 ? ''
                 : `<button class="btn btn--ghost" data-action="remove" type="button">Remove</button>`}
+              <button class="btn btn--ghost" data-action="edit" type="button">Edit</button>
             </td>
           </tr>`).join('')}
         </tbody>
-      </table></div>`;
+      </table></div>
+      <div id="edit-agent-card"></div>`;
+
+    const byId = new Map(people.map(p => [p.id, p]));
 
     // Each control saves on change — no separate save button to forget.
     roster.querySelectorAll('tr[data-id]').forEach(tr => {
@@ -194,6 +198,9 @@ export async function agents(main, ctx) {
         }
       });
 
+      tr.querySelector('[data-action="edit"]').addEventListener('click', () =>
+        renderEditForm(byId.get(id), teamOpts));
+
       const target = tr.querySelector('[data-field="target"]');
       target.addEventListener('change', async () => {
         const value = Number(target.value);
@@ -205,6 +212,85 @@ export async function agents(main, ctx) {
           toast(err.message, 'error');
         }
       });
+    });
+  }
+
+  function renderEditForm(p, teamOpts) {
+    const editCard = document.getElementById('edit-agent-card');
+    const isSelf = p.id === ctx.profile.id;
+    editCard.innerHTML = `
+      <div class="card" style="margin-top:14px">
+        <div class="card__head"><h2>Edit ${esc(p.full_name || p.email)}</h2></div>
+        <form id="edit-agent-form">
+          <div class="grid-2">
+            <label class="field">
+              <span>Name *</span>
+              <input type="text" id="ea-name" required maxlength="160" value="${esc(p.full_name || '')}">
+            </label>
+            <label class="field">
+              <span>Email *</span>
+              <input type="email" id="ea-email" required value="${esc(p.email || '')}">
+            </label>
+          </div>
+          <div class="grid-2">
+            <label class="field">
+              <span>Role *</span>
+              <select id="ea-role"${isSelf ? ' disabled title="You cannot change your own role."' : ''}>
+                ${ROLES.map(r => `<option value="${r.value}"${r.value === p.role ? ' selected' : ''}>${r.label}</option>`).join('')}
+              </select>
+            </label>
+            <label class="field">
+              <span>Team</span>
+              <select id="ea-team">
+                ${teamOpts.map(t => `<option value="${esc(t.value)}"${t.value === (p.team_id || '') ? ' selected' : ''}>${esc(t.label)}</option>`).join('')}
+              </select>
+            </label>
+          </div>
+          <label class="field">
+            <span>Reset password</span>
+            <div style="display:flex;gap:8px">
+              <input type="text" id="ea-password" minlength="8" placeholder="Leave blank to keep their current password" autocomplete="off">
+              <button class="btn" type="button" id="ea-gen">Generate</button>
+            </div>
+          </label>
+          <p class="muted">A new password takes effect immediately — share it with them directly. They can change it from Account after signing in.</p>
+          <div style="display:flex;gap:10px">
+            <button class="btn btn--primary" type="submit" id="ea-save">Save changes</button>
+            <button class="btn btn--ghost" type="button" id="ea-cancel">Cancel</button>
+          </div>
+        </form>
+      </div>`;
+
+    editCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const $ = sel => editCard.querySelector(sel);
+
+    $('#ea-gen').addEventListener('click', () => { $('#ea-password').value = randomTempPassword(); });
+    $('#ea-cancel').addEventListener('click', () => { editCard.innerHTML = ''; });
+
+    $('#edit-agent-form').addEventListener('submit', async e => {
+      e.preventDefault();
+      const password = $('#ea-password').value.trim();
+      if (password && password.length < 8) return toast('New password must be at least 8 characters.', 'error');
+
+      const btn = $('#ea-save');
+      btn.disabled = true;
+      btn.textContent = 'Saving…';
+      try {
+        await db.editAgent(p.id, {
+          fullName: $('#ea-name').value.trim(),
+          email: $('#ea-email').value.trim(),
+          role: $('#ea-role').value,
+          teamId: $('#ea-team').value,
+          password,
+        });
+        toast(password ? 'Account updated and password reset.' : 'Account updated.', 'ok');
+        editCard.innerHTML = '';
+        draw();
+      } catch (err) {
+        toast(err.message, 'error');
+        btn.disabled = false;
+        btn.textContent = 'Save changes';
+      }
     });
   }
 

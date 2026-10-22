@@ -11,7 +11,7 @@
 // an unauthenticated empty array reach the UI.
 // ---------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=68';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=69';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true },
@@ -607,6 +607,20 @@ export const createAgent = (firstName, lastName, email, password, role) =>
     email,
     password,
     role,
+  });
+
+// Name, email, role, team, and optionally a new password (blank = unchanged).
+// Email and password live on the login itself, so this goes through the
+// Edge Function rather than a profiles update.
+export const editAgent = (userId, { fullName, email, role, teamId, password }) =>
+  invokeFunction('admin-users', {
+    action: 'update',
+    user_id: userId,
+    full_name: fullName,
+    email,
+    role,
+    team_id: teamId || null,
+    password: password || '',
   });
 
 export const deleteAgent = userId =>
