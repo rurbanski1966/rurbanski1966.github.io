@@ -5,12 +5,12 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=69';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, showsRubricScore } from './config.js?v=69';
+import * as db from './db.js?v=70';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, showsRubricScore } from './config.js?v=70';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
   toast, statTile, barRow, empty, spinner, selectField, loadPdfMake, pdfSafe, loadJSZip, downloadBlob,
-} from './ui.js?v=69';
+} from './ui.js?v=70';
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -2616,9 +2616,11 @@ export async function calibration(main) {
    agents" is the scoring_leaderboard RPC's own order, since it already ranks
    across every team combined.
    -------------------------------------------------------------------------- */
-const scoreLevel = score => {
+// Each board sets its own color bands. Medicare's sit higher: Good starts at
+// the scorecard's 85% pass mark (SC_PASS_PERCENT).
+const scoreLevel = (score, bands) => {
   const n = Number(score) || 0;
-  return n >= 80 ? 'good' : n >= 70 ? 'warning' : 'critical';
+  return n >= bands.good ? 'good' : n >= bands.warning ? 'warning' : 'critical';
 };
 
 const scoreLevelChip = level => {
@@ -2643,6 +2645,7 @@ const LEADERBOARDS = {
     countLabel: 'Calls scored',
     scoreLabel: 'Avg score',
     emptyText: 'No scored calls in this period.',
+    bands: { good: 80, warning: 70 },
   },
   medicare: {
     title: 'Medicare leaderboard',
@@ -2651,6 +2654,7 @@ const LEADERBOARDS = {
     countLabel: 'Calls graded',
     scoreLabel: 'Avg scorecard %',
     emptyText: 'No calls graded against the Medicare scorecard in this period.',
+    bands: { good: 85, warning: 74 },
   },
 };
 
@@ -2666,9 +2670,9 @@ async function drawLeaderboard(main, board) {
     <div class="card" style="margin-bottom:16px">
       <div class="card__head"><h2>What the colors mean</h2></div>
       <div style="display:flex;flex-direction:column;gap:8px">
-        <div>${scoreLevelChip('critical')} <span class="muted">0–69% average — needs immediate coaching and a performance review.</span></div>
-        <div>${scoreLevelChip('warning')} <span class="muted">70–79% average — needs agent review.</span></div>
-        <div>${scoreLevelChip('good')} <span class="muted">80% or higher — good to go, no coaching needed.</span></div>
+        <div>${scoreLevelChip('critical')} <span class="muted">0–${board.bands.warning - 1}% average — needs immediate coaching and a performance review.</span></div>
+        <div>${scoreLevelChip('warning')} <span class="muted">${board.bands.warning}–${board.bands.good - 1}% average — needs agent review.</span></div>
+        <div>${scoreLevelChip('good')} <span class="muted">${board.bands.good}% or higher — good to go, no coaching needed.</span></div>
       </div>
     </div>
     <div class="filters">${selectField('alb-range', 'Period', RANGES, 'year')}</div>
@@ -2731,7 +2735,7 @@ async function drawLeaderboard(main, board) {
           <th class="num">${esc(board.countLabel)}</th><th class="num">${esc(board.scoreLabel)}</th><th></th>
         </tr></thead>
         <tbody>${ranked.map(r => {
-          const level = scoreLevel(r.avg_score);
+          const level = scoreLevel(r.avg_score, board.bands);
           return `
             <tr class="lb-row--${level}">
               <td class="tnum">${r.displayRank}</td>
