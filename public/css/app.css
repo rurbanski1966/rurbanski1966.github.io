@@ -29,6 +29,13 @@
   --series-2: #d95926;  /* Ancillary */
   --series-3: #199e70;  /* Combined */
 
+  /* Agencies (Dashboard). Palette slots 1-3, which validate all-pairs in
+     both themes; Unassigned is a neutral, not a fourth hue. */
+  --agency-smc:  #3987e5;
+  --agency-ewss: #d95926;
+  --agency-sba:  #199e70;
+  --agency-none: #898781;
+
   /* Ordinal ramp for the dialer funnel — one hue, darker down the stages.
      Bounded at 300/600: lighter than 250 fails contrast on the light surface,
      darker than 600 fails it on the dark one. */
@@ -77,6 +84,11 @@
   --series-1: #2a78d6;
   --series-2: #eb6834;
   --series-3: #1baf7a;
+
+  --agency-smc:  #2a78d6;
+  --agency-ewss: #eb6834;
+  --agency-sba:  #1baf7a;  /* 2.74:1 on this surface: chart carries direct labels + table view */
+  --agency-none: #898781;
 
   --seq-400: #3987e5;
   --seq-500: #256abf;
@@ -387,6 +399,110 @@ code {
   transition: width .3s ease;
 }
 .meter__fill--good { background: var(--good); }
+
+/* --- Dashboard: spend by agency ------------------------------------------ */
+.card__head--wrap { flex-wrap: wrap; align-items: flex-start; }
+
+.spend-total__grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.spend-stat { padding: 2px 18px; border-left: 1px solid var(--grid); min-width: 0; }
+.spend-stat:first-child { padding-left: 0; border-left: 0; }
+.spend-stat__label { font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
+.spend-stat__value { font-size: 26px; font-weight: 600; letter-spacing: -0.02em; }
+@media (max-width: 620px) {
+  .spend-total__grid { grid-template-columns: 1fr 1fr; row-gap: 16px; }
+  .spend-stat:nth-child(3) { padding-left: 0; border-left: 0; }
+  .spend-stat__value { font-size: 22px; }
+}
+
+.agency-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 14px;
+  margin-bottom: 10px;
+}
+/* The agency's color is a stripe and a swatch, never the text: values stay
+   in text ink so they read the same in every color. */
+.agency-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: inset 0 3px 0 var(--agency);
+  padding: 18px 18px 16px;
+}
+.agency-card__head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.agency-card__head h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.agency-card__swatch { width: 10px; height: 10px; border-radius: 3px; background: var(--agency); flex: none; }
+.agency-card__share { margin-left: auto; font-size: 12px; color: var(--text-muted); }
+.agency-card__label { font-size: 12px; color: var(--text-secondary); }
+.agency-card__value { font-size: 28px; font-weight: 600; letter-spacing: -0.02em; margin: 2px 0 10px; }
+.agency-card__meter { height: 6px; border-radius: 3px; background: var(--grid); overflow: hidden; }
+.agency-card__meter > div { height: 100%; border-radius: 3px; background: var(--agency); }
+.agency-card__periods {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 14px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--grid);
+}
+.agency-card__periods dt { font-size: 11px; color: var(--text-muted); }
+.agency-card__periods dd { margin: 2px 0 0; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.agency-card__flag { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 0; font-size: 12px; }
+.dash-note { font-size: 12px; margin: 0 0 18px; }
+
+.chart-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.seg {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.seg button {
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 11px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.seg button:hover { color: var(--text-primary); }
+.seg button[aria-pressed='true'] {
+  background: var(--surface-1);
+  color: var(--text-primary);
+  box-shadow: 0 0 0 1px var(--border);
+}
+.seg button:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+
+.agency-chart { position: relative; }
+.agency-chart svg { width: 100%; height: auto; display: block; touch-action: pan-y; }
+.agency-chart svg:focus-visible { outline: 2px solid var(--brand); outline-offset: 4px; border-radius: 4px; }
+.chart-baseline { stroke: var(--baseline); stroke-width: 1; }
+.chart-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart-dot { stroke: var(--surface-1); stroke-width: 2; }
+.chart-endlabel { font-size: 11px; font-weight: 600; fill: var(--text-secondary); }
+.chart-xhair { stroke: var(--text-muted); stroke-width: 1; }
+.chart-hit { fill: transparent; cursor: crosshair; }
+.chart-tip {
+  position: absolute;
+  top: 6px;
+  min-width: 170px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  font-size: 12px;
+  pointer-events: none;
+  z-index: 2;
+}
+.chart-tip__title { font-weight: 600; color: var(--text-primary); margin-bottom: 6px; white-space: nowrap; }
+.chart-tip__row { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); padding: 1px 0; }
+.chart-tip__row b { margin-left: auto; padding-left: 14px; color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+.chart-tip__total { border-top: 1px solid var(--grid); margin-top: 5px; padding-top: 6px; }
+.legend__swatch--inline { display: inline-block; margin-right: 6px; vertical-align: -1px; }
 
 /* --- Bar rows (leaderboard + report breakdowns) -------------------------- */
 .bars { display: flex; flex-direction: column; gap: 8px; }

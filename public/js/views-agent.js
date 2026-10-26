@@ -2,12 +2,12 @@
 // Agent-facing views: dashboard, my sales.
 // Every view exports render(main, ctx) and wires its own listeners.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=72';
-import { CATEGORIES } from './config.js?v=72';
+import * as db from './db.js?v=73';
+import { CATEGORIES } from './config.js?v=73';
 import {
-  esc, fmtMoneyExact, fmtNum, fmtDate,
-  toast, statTile, statusChip, empty, spinner, selectField,
-} from './ui.js?v=72';
+  esc, fmtMoney, fmtMoneyExact, fmtNum, fmtPct, fmtDate,
+  toast, statusChip, empty, spinner, selectField, legend,
+} from './ui.js?v=73';
 
 const SERIES = {
   mapd:      'var(--series-1)',
@@ -16,6 +16,26 @@ const SERIES = {
 };
 
 /* === Dashboard ============================================================ */
+// Every agency a cost can land in, in the palette's fixed slot order — a
+// color follows its agency everywhere (cards, chart, tooltip, table), never
+// its rank. The three slots validate all-pairs in both themes (dataviz
+// validator). Unassigned is a neutral gray, not a fourth hue: it's a to-do,
+// not an agency. `m` is the my_metrics() column prefix.
+const AGENCIES = [
+  { key: 'SMC',  color: 'var(--agency-smc)',  m: 'smc' },
+  { key: 'EWSS', color: 'var(--agency-ewss)', m: 'ewss' },
+  { key: 'SBA',  color: 'var(--agency-sba)',  m: 'sba' },
+];
+const UNASSIGNED = { key: 'Unassigned', color: 'var(--agency-none)', m: 'unassigned' };
+
+const PERIODS = [
+  { key: 'daily',   label: 'Today' },
+  { key: 'weekly',  label: 'This week' },
+  { key: 'monthly', label: 'This month' },
+  { key: 'yearly',  label: 'Year to date' },
+];
+const spendOf = (m, prefix, period) => Number(m[`${prefix ? `${prefix}_` : ''}${period}_spend`] ?? 0);
+
 export async function dashboard(main, ctx) {
   const isAdmin = ctx.profile.role === 'admin';
 
@@ -23,12 +43,13 @@ export async function dashboard(main, ctx) {
     <div class="page__head">
       <div>
         <h1>Dashboard</h1>
-        <div class="page__sub">${esc(ctx.profile.full_name)} · month to date</div>
+        <div class="page__sub">${esc(ctx.profile.full_name)} · AI spend by agency</div>
       </div>
     </div>
-    <div id="kpis">${spinner()}</div>
-    <div class="card" id="recent">${spinner()}</div>
-    ${isAdmin ? `<div class="card" id="agent-spend">${spinner()}</div>` : ''}`;
+    <div id="spend-overview">${spinner()}</div>
+    <div class="card" id="spend-chart">${spinner()}</div>
+    ${isAdmin ? `<div class="card" id="agent-spend">${spinner()}</div>` : ''}
+    <div class="card" id="recent">${spinner()}</div>`;
 
   const [m, mine, agentSpend, unassignedCalls] = await Promise.all([
     db.myMetrics(),
@@ -37,34 +58,8 @@ export async function dashboard(main, ctx) {
     isAdmin ? db.unassignedCostCalls() : Promise.resolve([]),
   ]);
 
-  document.getElementById('kpis').outerHTML = `
-    <div id="kpis">
-      <div class="kpis">
-        ${statTile({ label: 'Daily spend', value: fmtMoneyExact(m.daily_spend), note: 'All AI costs, today' })}
-        ${statTile({ label: 'Weekly spend', value: fmtMoneyExact(m.weekly_spend), note: 'All AI costs, Monday–Sunday' })}
-        ${statTile({ label: 'Monthly spend', value: fmtMoneyExact(m.monthly_spend), note: 'All AI costs, this month' })}
-        ${statTile({ label: 'Yearly spend', value: fmtMoneyExact(m.yearly_spend), note: 'All AI costs, this year' })}
-      </div>
-      <div class="kpis">
-        ${statTile({ label: 'SMC Daily spend', value: fmtMoneyExact(m.smc_daily_spend), note: "SMC calls, today" })}
-        ${statTile({ label: 'SMC Weekly spend', value: fmtMoneyExact(m.smc_weekly_spend), note: 'SMC calls, Monday–Sunday' })}
-        ${statTile({ label: 'SMC Monthly spend', value: fmtMoneyExact(m.smc_monthly_spend), note: 'SMC calls, this month' })}
-        ${statTile({ label: 'SMC Yearly spend', value: fmtMoneyExact(m.smc_yearly_spend), note: 'SMC calls, year to date' })}
-        ${statTile({ label: 'EWSS Daily spend', value: fmtMoneyExact(m.ewss_daily_spend), note: "EWSS calls, today" })}
-        ${statTile({ label: 'EWSS Weekly spend', value: fmtMoneyExact(m.ewss_weekly_spend), note: 'EWSS calls, Monday–Sunday' })}
-        ${statTile({ label: 'EWSS Monthly spend', value: fmtMoneyExact(m.ewss_monthly_spend), note: 'EWSS calls, this month' })}
-        ${statTile({ label: 'EWSS Yearly spend', value: fmtMoneyExact(m.ewss_yearly_spend), note: 'EWSS calls, year to date' })}
-        ${statTile({ label: 'SBA Daily spend', value: fmtMoneyExact(m.sba_daily_spend ?? 0), note: "SBA calls, today" })}
-        ${statTile({ label: 'SBA Weekly spend', value: fmtMoneyExact(m.sba_weekly_spend ?? 0), note: 'SBA calls, Monday–Sunday' })}
-        ${statTile({ label: 'SBA Monthly spend', value: fmtMoneyExact(m.sba_monthly_spend ?? 0), note: 'SBA calls, this month' })}
-        ${statTile({ label: 'SBA Yearly spend', value: fmtMoneyExact(m.sba_yearly_spend ?? 0), note: 'SBA calls, year to date' })}
-      </div>
-      ${unassignedTilesHtml(m)}
-      <p class="muted" style="font-size:12px;margin:4px 0 0">
-        AI costs = coaching-rubric scoring, Medicare scorecard grading, and AI review summaries. A call's cost goes to its
-        Agency Assigned, or the agent's own team if none was set. Transcription isn't tracked per call.
-      </p>
-    </div>`;
+  document.getElementById('spend-overview').innerHTML = overviewHtml(m, isAdmin);
+  drawSpendChart(document.getElementById('spend-chart'));
 
   const recent = document.getElementById('recent');
   recent.innerHTML = `
@@ -86,20 +81,353 @@ export async function dashboard(main, ctx) {
   if (isAdmin && unassignedCalls.length) drawUnassignedCalls(unassignedCalls);
 }
 
-// Spend that belongs to none of SMC, EWSS or SBA. Shown only when there is some,
-// as a prompt to fix it: every cost is meant to land in one of the three.
-const hasUnassigned = m => [m.unassigned_daily_spend, m.unassigned_weekly_spend, m.unassigned_monthly_spend, m.unassigned_yearly_spend]
-  .some(v => Number(v) > 0);
+// Spend that belongs to none of SMC, EWSS or SBA. Its card shows only when
+// there is some, as a prompt to fix it: every cost is meant to land in one.
+const hasUnassigned = m => PERIODS.some(p => spendOf(m, 'unassigned', p.key) > 0);
 
-function unassignedTilesHtml(m) {
-  if (!hasUnassigned(m)) return '';
+function overviewHtml(m, isAdmin) {
+  const groups = hasUnassigned(m) ? [...AGENCIES, UNASSIGNED] : AGENCIES;
+  const monthTotal = spendOf(m, '', 'monthly');
   return `
-    <div class="kpis">
-      ${statTile({ label: 'Unassigned Daily spend', value: fmtMoneyExact(m.unassigned_daily_spend), note: 'No agency set — not in SMC, EWSS or SBA' })}
-      ${statTile({ label: 'Unassigned Weekly spend', value: fmtMoneyExact(m.unassigned_weekly_spend), note: 'No agency set — not in SMC, EWSS or SBA' })}
-      ${statTile({ label: 'Unassigned Monthly spend', value: fmtMoneyExact(m.unassigned_monthly_spend), note: 'No agency set — not in SMC, EWSS or SBA' })}
-      ${statTile({ label: 'Unassigned Yearly spend', value: fmtMoneyExact(m.unassigned_yearly_spend), note: 'No agency set — not in SMC, EWSS or SBA' })}
+    <section class="card spend-total">
+      <div class="card__head">
+        <h2>Total AI spend</h2>
+        <span class="muted">All agencies</span>
+      </div>
+      <div class="spend-total__grid">
+        ${PERIODS.map(p => `
+          <div class="spend-stat">
+            <div class="spend-stat__label">${esc(p.label)}</div>
+            <div class="spend-stat__value">${esc(fmtMoneyExact(spendOf(m, '', p.key)))}</div>
+          </div>`).join('')}
+      </div>
+    </section>
+    <div class="agency-grid">
+      ${groups.map(a => agencyCardHtml(a, m, monthTotal, isAdmin)).join('')}
+    </div>
+    <p class="dash-note muted">
+      AI costs = coaching-rubric scoring, Medicare scorecard grading, and AI review summaries, billed per agency.
+      A call's cost goes to its Agency Assigned, or the agent's own team if none was set. Transcription isn't tracked per call.
+    </p>`;
+}
+
+function agencyCardHtml(a, m, monthTotal, isAdmin) {
+  const month = spendOf(m, a.m, 'monthly');
+  const share = monthTotal > 0 ? month / monthTotal : 0;
+  const isUn = a === UNASSIGNED;
+  return `
+    <section class="agency-card" style="--agency:${a.color}">
+      <header class="agency-card__head">
+        <span class="agency-card__swatch" aria-hidden="true"></span>
+        <h3>${esc(a.key)}</h3>
+        <span class="agency-card__share">${esc(fmtPct(share, 0))} of this month</span>
+      </header>
+      <div class="agency-card__label">This month</div>
+      <div class="agency-card__value">${esc(fmtMoneyExact(month))}</div>
+      <div class="agency-card__meter" role="img" aria-label="${esc(a.key)}: ${esc(fmtPct(share, 0))} of this month's AI spend">
+        <div style="width:${(share * 100).toFixed(1)}%"></div>
+      </div>
+      <dl class="agency-card__periods">
+        ${PERIODS.filter(p => p.key !== 'monthly').map(p => `
+          <div><dt>${esc(p.label)}</dt><dd>${esc(fmtMoneyExact(spendOf(m, a.m, p.key)))}</dd></div>`).join('')}
+      </dl>
+      ${isUn ? `
+        <p class="agency-card__flag">
+          <span class="chip chip--warning"><span aria-hidden="true">!</span>Needs an agency</span>
+          <span class="muted">${isAdmin ? 'Calls listed below.' : 'Ask an admin to set Agency Assigned.'}</span>
+        </p>` : ''}
+    </section>`;
+}
+
+/* --- Spend by agency chart ------------------------------------------------ */
+// One line per agency over a chosen range, bucketed so the line has a
+// readable number of points: daily for 30 days, weekly for 90, monthly for
+// the year. Hover (or arrow keys) shows every agency's value for that
+// bucket; the table view is the same numbers for anyone who'd rather read
+// them, and the relief the light-theme SBA aqua needs (below 3:1 contrast).
+const CHART_RANGES = [
+  { key: '30d', label: '30 days',   bucket: 'day',   unit: 'day' },
+  { key: '90d', label: '90 days',   bucket: 'week',  unit: 'week' },
+  { key: 'ytd', label: 'This year', bucket: 'month', unit: 'month' },
+];
+const RANGE_KEY = 'lana.dashboard.range';
+
+const chicagoToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago' }).format(new Date());
+const addDays = (iso, n) => {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+const mondayOf = iso => addDays(iso, -((new Date(`${iso}T00:00:00Z`).getUTCDay() + 6) % 7));
+const fmtDay = (iso, opts) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-US', { timeZone: 'UTC', ...opts });
+
+function rangeBounds(range, today) {
+  if (range.key === '30d') return { start: addDays(today, -29), end: today };
+  if (range.key === '90d') return { start: mondayOf(addDays(today, -90)), end: today };
+  return { start: `${today.slice(0, 4)}-01-01`, end: today };
+}
+
+const bucketOf = (bucket, day) =>
+  bucket === 'day' ? day : bucket === 'week' ? mondayOf(day) : `${day.slice(0, 7)}-01`;
+
+const bucketAxisLabel = (bucket, k) =>
+  bucket === 'month' ? fmtDay(k, { month: 'short' }) : fmtDay(k, { month: 'short', day: 'numeric' });
+
+const bucketTitle = (bucket, k) =>
+  bucket === 'day' ? fmtDay(k, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+  : bucket === 'week' ? `Week of ${fmtDay(k, { month: 'short', day: 'numeric', year: 'numeric' })}`
+  : fmtDay(k, { month: 'long', year: 'numeric' });
+
+function loadRange() {
+  try { return CHART_RANGES.find(r => r.key === localStorage.getItem(RANGE_KEY)) ?? CHART_RANGES[0]; }
+  catch { return CHART_RANGES[0]; }
+}
+function saveRange(key) {
+  try { localStorage.setItem(RANGE_KEY, key); } catch { /* private window: just don't remember */ }
+}
+
+async function drawSpendChart(card) {
+  let range = loadRange();
+  let view = 'chart';
+
+  card.innerHTML = `
+    <div class="card__head card__head--wrap">
+      <div>
+        <h2>Spend by agency</h2>
+        <div class="muted" id="sc-sub" style="font-size:12px;margin-top:3px"></div>
+      </div>
+      <div class="chart-controls">
+        <div class="seg" role="group" aria-label="Time range">
+          ${CHART_RANGES.map(r => `<button type="button" data-range="${r.key}" aria-pressed="${r.key === range.key}">${esc(r.label)}</button>`).join('')}
+        </div>
+        <button type="button" class="btn btn--ghost btn--sm" id="sc-view">Table view</button>
+      </div>
+    </div>
+    <div id="sc-body">${spinner()}</div>`;
+
+  const body = card.querySelector('#sc-body');
+  const sub = card.querySelector('#sc-sub');
+  const viewBtn = card.querySelector('#sc-view');
+  let model = null;
+
+  async function load() {
+    body.innerHTML = spinner();
+    const today = chicagoToday();
+    const { start, end } = rangeBounds(range, today);
+    const rows = await db.agencySpendDaily(start, end);
+    if (rows === null) {
+      model = null;
+      body.innerHTML = empty('The spend chart needs database migration 045 (agency_spend_daily) to be run in Supabase.');
+      return;
+    }
+    model = buildModel(rows, range);
+    sub.textContent = `Billed AI cost per ${range.unit} · ${fmtDay(start, { month: 'short', day: 'numeric' })} – ${fmtDay(end, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+    render();
+  }
+
+  function render() {
+    if (!model) return;
+    if (model.grand === 0) {
+      body.innerHTML = empty('No AI spend in this period.');
+      return;
+    }
+    model.W = chartWidth(body.clientWidth);
+    body.innerHTML = view === 'chart' ? chartHtml(model) : chartTableHtml(model);
+    if (view === 'chart') wireChart(body.querySelector('.agency-chart'), model);
+  }
+
+  card.querySelectorAll('[data-range]').forEach(btn => btn.addEventListener('click', () => {
+    if (btn.dataset.range === range.key) return;
+    range = CHART_RANGES.find(r => r.key === btn.dataset.range);
+    saveRange(range.key);
+    card.querySelectorAll('[data-range]').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+    load();
+  }));
+  // Redraw at the new width when the card is resized (phone rotation,
+  // sidebar collapse), but not for every pixel of a drag.
+  let lastW = 0;
+  new ResizeObserver(() => {
+    const w = chartWidth(body.clientWidth);
+    if (model && view === 'chart' && Math.abs(w - lastW) > 40) { lastW = w; render(); }
+  }).observe(body);
+
+  viewBtn.addEventListener('click', () => {
+    view = view === 'chart' ? 'table' : 'chart';
+    viewBtn.textContent = view === 'chart' ? 'Table view' : 'Chart view';
+    render();
+  });
+
+  await load();
+}
+
+// rows: one per day per category, zeros included (migration 045).
+function buildModel(rows, range) {
+  const keys = [];
+  const sums = new Map();
+  for (const r of rows) {
+    const k = bucketOf(range.bucket, r.day);
+    if (!sums.has(k)) { sums.set(k, {}); keys.push(k); }
+    const b = sums.get(k);
+    b[r.category] = (b[r.category] ?? 0) + Number(r.total_cost);
+  }
+  const unTotal = keys.reduce((s, k) => s + (sums.get(k).Unassigned ?? 0), 0);
+  const groups = unTotal > 0 ? [...AGENCIES, UNASSIGNED] : AGENCIES;
+  const series = groups.map(a => ({ ...a, values: keys.map(k => sums.get(k)[a.key] ?? 0) }));
+  const totals = keys.map((_, i) => series.reduce((s, x) => s + x.values[i], 0));
+  return { range, keys, series, totals, grand: totals.reduce((s, v) => s + v, 0) };
+}
+
+// A round axis top and step: 1, 2, 2.5 or 5 × a power of ten, ~4 gridlines.
+function niceScale(max) {
+  if (max <= 0) return { top: 1, step: 0.25 };
+  const raw = max / 4;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map(f => f * mag).find(s => s >= raw);
+  return { top: step * Math.ceil(max / step - 1e-9), step };
+}
+const axisMoney = v => (v >= 100 ? fmtMoney(v) : fmtMoneyExact(v));
+
+// W is set per render from the card's real width (see drawSpendChart), so
+// axis text stays its real size on a phone instead of shrinking with a
+// fixed-width viewBox.
+const CHART = { H: 260, padL: 56, padR: 84, padT: 14, padB: 26 };
+const chartWidth = px => Math.round(Math.min(900, Math.max(320, px || 720)));
+
+function geometry(model) {
+  const { H, padL, padR, padT, padB } = CHART;
+  const innerW = model.W - padL - padR;
+  const innerH = H - padT - padB;
+  const n = model.keys.length;
+  const max = Math.max(0, ...model.series.flatMap(s => s.values));
+  const { top, step } = niceScale(max);
+  const xFor = i => (n <= 1 ? padL + innerW / 2 : padL + (innerW * i) / (n - 1));
+  const yFor = v => padT + innerH - (v / top) * innerH;
+  return { innerW, innerH, n, top, step, xFor, yFor };
+}
+
+function chartHtml(model) {
+  const { padL, padR, padT } = CHART;
+  const W = model.W;
+  const g = geometry(model);
+  const { n, xFor, yFor, top, step } = g;
+  const bottom = padT + g.innerH;
+
+  const ticks = [];
+  for (let v = 0; v <= top + 1e-9; v += step) ticks.push(v);
+  const grid = ticks.map(v => `
+    <line x1="${padL}" x2="${W - padR}" y1="${yFor(v)}" y2="${yFor(v)}" class="${v === 0 ? 'chart-baseline' : 'chart-grid'}" />
+    <text x="${padL - 8}" y="${yFor(v) + 3.5}" text-anchor="end" class="chart-axis">${esc(axisMoney(v))}</text>`).join('');
+
+  // One x label per ~80px, always including the last bucket.
+  const every = Math.max(1, Math.ceil(n / Math.max(3, Math.floor(g.innerW / 80))));
+  const xLabels = model.keys.map((k, i) => ((n - 1 - i) % every === 0
+    ? `<text x="${xFor(i)}" y="${CHART.H - 6}" text-anchor="middle" class="chart-axis">${esc(bucketAxisLabel(model.range.bucket, k))}</text>`
+    : '')).join('');
+
+  // Markers only when there are few enough points to read as points.
+  const markers = n <= 14;
+  const lines = model.series.map(s => {
+    const pts = s.values.map((v, i) => `${xFor(i).toFixed(1)},${yFor(v).toFixed(1)}`).join(' ');
+    const dots = markers ? s.values.map((v, i) =>
+      `<circle cx="${xFor(i)}" cy="${yFor(v)}" r="4" class="chart-dot" style="fill:${s.color}" />`).join('') : '';
+    return `<polyline points="${pts}" class="chart-line" style="stroke:${s.color}" />${dots}`;
+  }).join('');
+
+  // Direct labels at each line's end, nudged apart so close values don't
+  // print on top of each other. Text ink, not the series color.
+  const ends = model.series.map(s => ({ s, y: yFor(s.values[n - 1]) })).sort((a, b) => a.y - b.y);
+  for (let i = 1; i < ends.length; i++) ends[i].y = Math.max(ends[i].y, ends[i - 1].y + 13);
+  const overflow = ends.length ? ends[ends.length - 1].y - (bottom + 2) : 0;
+  if (overflow > 0) ends.forEach(e => { e.y -= overflow; });
+  const endLabels = ends.map(e =>
+    `<text x="${xFor(n - 1) + 9}" y="${e.y + 4}" class="chart-endlabel">${esc(e.s.key)}</text>`).join('');
+
+  return `
+    ${legend(model.series.map(s => ({ label: s.key, color: s.color })))}
+    <div class="agency-chart">
+      <svg viewBox="0 0 ${W} ${CHART.H}" width="${W}" height="${CHART.H}" tabindex="0" role="img"
+           aria-label="Line chart of AI spend per ${esc(model.range.unit)} for ${esc(model.series.map(s => s.key).join(', '))}. Use the table view for exact values.">
+        ${grid}
+        ${lines}
+        ${endLabels}
+        ${xLabels}
+        <g class="chart-hover" style="display:none"></g>
+        <rect x="${padL}" y="${padT}" width="${g.innerW}" height="${g.innerH}" class="chart-hit" />
+      </svg>
+      <div class="chart-tip" style="display:none"></div>
     </div>`;
+}
+
+function wireChart(wrap, model) {
+  const svg = wrap.querySelector('svg');
+  const hover = svg.querySelector('.chart-hover');
+  const tip = wrap.querySelector('.chart-tip');
+  const { xFor, yFor, n } = geometry(model);
+  const { padT, H, padB } = CHART;
+  let current = -1;
+
+  function show(i) {
+    if (i === current) return;
+    current = i;
+    if (i < 0) { hover.style.display = 'none'; tip.style.display = 'none'; return; }
+
+    const x = xFor(i);
+    hover.innerHTML =
+      `<line x1="${x}" x2="${x}" y1="${padT}" y2="${H - padB}" class="chart-xhair" />` +
+      model.series.map(s => `<circle cx="${x}" cy="${yFor(s.values[i])}" r="5" class="chart-dot" style="fill:${s.color}" />`).join('');
+    hover.style.display = '';
+
+    const partial = i === n - 1 ? ' <span class="muted">(so far)</span>' : '';
+    tip.innerHTML = `
+      <div class="chart-tip__title">${esc(bucketTitle(model.range.bucket, model.keys[i]))}${partial}</div>
+      ${model.series.map(s => `
+        <div class="chart-tip__row"><span class="legend__swatch" style="background:${s.color}"></span>${esc(s.key)}<b>${esc(fmtMoneyExact(s.values[i]))}</b></div>`).join('')}
+      <div class="chart-tip__row chart-tip__total">Total<b>${esc(fmtMoneyExact(model.totals[i]))}</b></div>`;
+    tip.style.display = '';
+
+    // Keep the tooltip inside the card: right of the crosshair, or left of
+    // it once it would run off the edge.
+    const px = (x / model.W) * wrap.clientWidth;
+    const w = tip.offsetWidth;
+    tip.style.left = `${px + 14 + w > wrap.clientWidth ? Math.max(0, px - 14 - w) : px + 14}px`;
+  }
+
+  const indexAt = clientX => {
+    const r = svg.getBoundingClientRect();
+    const vx = ((clientX - r.left) / r.width) * model.W;
+    if (n <= 1) return 0;
+    const stepX = (xFor(n - 1) - xFor(0)) / (n - 1);
+    return Math.min(n - 1, Math.max(0, Math.round((vx - xFor(0)) / stepX)));
+  };
+
+  svg.addEventListener('pointermove', e => show(indexAt(e.clientX)));
+  svg.addEventListener('pointerleave', () => show(-1));
+  svg.addEventListener('focus', () => show(n - 1));
+  svg.addEventListener('blur', () => show(-1));
+  svg.addEventListener('keydown', e => {
+    if (e.key === 'ArrowLeft') { e.preventDefault(); show(Math.max(0, current - 1)); }
+    if (e.key === 'ArrowRight') { e.preventDefault(); show(Math.min(n - 1, current + 1)); }
+    if (e.key === 'Escape') show(-1);
+  });
+}
+
+function chartTableHtml(model) {
+  const idx = model.keys.map((_, i) => i).reverse(); // most recent first
+  return `
+    <div class="tablewrap"><table>
+      <thead><tr>
+        <th>${esc(model.range.unit === 'day' ? 'Day' : model.range.unit === 'week' ? 'Week' : 'Month')}</th>
+        ${model.series.map(s => `<th class="num"><span class="legend__swatch legend__swatch--inline" style="background:${s.color}"></span>${esc(s.key)}</th>`).join('')}
+        <th class="num">Total</th>
+      </tr></thead>
+      <tbody>${idx.map(i => `
+        <tr>
+          <td>${esc(bucketTitle(model.range.bucket, model.keys[i]))}${i === model.keys.length - 1 ? ' <span class="muted">(so far)</span>' : ''}</td>
+          ${model.series.map(s => `<td class="num">${esc(fmtMoneyExact(s.values[i]))}</td>`).join('')}
+          <td class="num"><strong>${esc(fmtMoneyExact(model.totals[i]))}</strong></td>
+        </tr>`).join('')}
+      </tbody>
+    </table></div>`;
 }
 
 // The calls behind the Unassigned figure. Setting Agency Assigned on each

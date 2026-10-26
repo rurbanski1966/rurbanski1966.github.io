@@ -11,7 +11,7 @@
 // an unauthenticated empty array reach the UI.
 // ---------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=72';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=73';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true },
@@ -253,6 +253,17 @@ export async function unassignedCostCalls() {
   await requireSession();
   const { data, error } = await supabase.rpc('unassigned_cost_calls');
   if (error) { console.warn('unassigned_cost_calls:', error.message); return []; }
+  return data ?? [];
+}
+
+// Daily billed spend per agency (SMC / EWSS / SBA / Unassigned), every day in
+// the range including zeros (migration 045). Before 045 has run the function
+// doesn't exist; returns null so the Dashboard chart can say so instead of
+// failing the whole page.
+export async function agencySpendDaily(start, end) {
+  await requireSession();
+  const { data, error } = await supabase.rpc('agency_spend_daily', { p_start: start, p_end: end });
+  if (error) { console.warn('agency_spend_daily:', error.message); return null; }
   return data ?? [];
 }
 
