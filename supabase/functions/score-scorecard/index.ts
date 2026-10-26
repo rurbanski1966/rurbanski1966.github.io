@@ -148,7 +148,7 @@ In "reason", say in one or two plain sentences what the agent did or did not do.
 Set needs_review to true, and say why in review_reason, whenever a careful person could reasonably grade the item the other way. In particular:
 
 - The item asks whether a cost, network status or benefit was stated "accurately". You have no Summary of Benefits to check against, so grade on whether the agent stated it clearly and completely, and flag that accuracy was not verified.
-- The item depends on timing (the TPMO disclaimer in the first minute). The transcript carries no timestamps, so judge from position in the call and flag it.
+- The item's own context makes it depend on timing. The transcript carries no timestamps, so judge from position in the call and flag it. (The TPMO disclaimer has no time limit; never flag it for timing.)
 - The item requires exact wording and the transcript may not preserve it. These are machine transcripts: a spoken "three hundred fifteen dollars" is usually written "$315", so treat a dollar sign as the word "dollars" having been said. Garbled or obviously mis-heard words are the transcriber's fault, not the agent's; do not fail an item on them alone, but flag it.
 - Speaker labels look wrong and it matters who said the line.
 - Your confidence is not "high" for any other reason.
