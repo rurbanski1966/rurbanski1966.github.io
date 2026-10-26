@@ -5,12 +5,12 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=71';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, showsRubricScore } from './config.js?v=71';
+import * as db from './db.js?v=72';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, showsRubricScore } from './config.js?v=72';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
   toast, statTile, barRow, empty, spinner, selectField, loadPdfMake, pdfSafe, loadJSZip, downloadBlob,
-} from './ui.js?v=71';
+} from './ui.js?v=72';
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -774,7 +774,7 @@ export async function reviewDetail(main, ctx, recordingId) {
           </form>` : ''}
       </div>
 
-      <div id="score-header">${score ? scoreHeaderHtml(score) : ''}</div>
+      <div id="score-header">${score ? scoreHeaderHtml(score, db.costMarkup(rec)) : ''}</div>
       <div id="override-area">${score && ctx.profile.role === 'admin' ? spinner() : ''}</div>
       <div id="dimensions-area">${score ? spinner() : ''}</div>
       <div id="findings-area">${score ? spinner() : ''}</div>
@@ -1020,7 +1020,7 @@ export async function reviewDetail(main, ctx, recordingId) {
       e.target.textContent = 'Scoring…';
       try {
         const result = await db.scoreCall(rec.id);
-        toast(`Scored. Cost ${fmtMoneyExact(result?.cost_usd ?? 0)}.`, 'ok');
+        toast(`Scored. Cost ${fmtMoneyExact((result?.cost_usd ?? 0) * db.costMarkup(rec))}.`, 'ok');
       } catch (err) {
         toast(err.message, 'error');
       }
@@ -1540,7 +1540,7 @@ async function drawScorecard(rec, ctx, turns, jumpToTurn = () => {}) {
     btn.textContent = 'Grading… about a minute';
     try {
       const result = await db.gradeScorecard(rec.id);
-      toast(`Graded. Cost ${fmtMoneyExact(result?.cost_usd ?? 0)}.`, 'ok');
+      toast(`Graded. Cost ${fmtMoneyExact((result?.cost_usd ?? 0) * db.costMarkup(rec))}.`, 'ok');
     } catch (err) {
       toast(err.message, 'error');
     }
@@ -1681,7 +1681,7 @@ async function drawScorecard(rec, ctx, turns, jumpToTurn = () => {}) {
         <button class="btn btn--primary" type="button" id="sc-report-open" style="margin-bottom:14px">Detailed call rubric report</button>
         <p class="muted" style="margin:0;font-size:13px">
           N/A items are left out of the score. Version ${esc(grade.scorecard_version)} ·
-          graded ${esc(fmtDate(grade.created_at))}${isAdmin && grade.cost_usd != null ? ` · cost ${esc(fmtMoneyExact(grade.cost_usd))}` : ''}.
+          graded ${esc(fmtDate(grade.created_at))}${isAdmin && grade.cost_usd != null ? ` · cost ${esc(fmtMoneyExact(grade.cost_usd * db.costMarkup(rec)))}` : ''}.
           ${isAdmin ? 'Changes save as you make them.' : ''}
         </p>
         <div class="sc-filters">
@@ -2185,7 +2185,7 @@ function evidenceHtml(text, turns, { inline = false } = {}) {
 // KPIs + Summary. Split from scoreFooterHtml() so the interactive By
 // dimension and Compliance findings sections can render between them in the
 // page's actual visual order, instead of being appended after everything.
-function scoreHeaderHtml(score) {
+function scoreHeaderHtml(score, markup = 1) {
   const eff = effectiveOf(score);
   const visibleFindings = eff.findings.filter(f => !f.dismissed);
 
@@ -2230,9 +2230,11 @@ function scoreHeaderHtml(score) {
         // itself or into spend_summary()/my_metrics(): those aggregate by
         // the day a call was SCORED, and a summary generated days later
         // would misattribute its cost to the wrong day there.
-        value: fmtMoneyExact(Number(score.cost_usd || 0) + Number(score.manual_summary_cost_usd || 0)),
+        // markup: the call's team upcharge (SBA +10%, migration 043), folded in
+        // rather than shown as its own line.
+        value: fmtMoneyExact((Number(score.cost_usd || 0) + Number(score.manual_summary_cost_usd || 0)) * markup),
         note: score.manual_summary_cost_usd
-          ? `${fmtNum(score.input_tokens)} in · ${fmtNum(score.output_tokens)} out · ${fmtNum(score.cache_read_tokens)} cached + ${fmtMoneyExact(score.manual_summary_cost_usd)} AI summary`
+          ? `${fmtNum(score.input_tokens)} in · ${fmtNum(score.output_tokens)} out · ${fmtNum(score.cache_read_tokens)} cached + ${fmtMoneyExact(score.manual_summary_cost_usd * markup)} AI summary`
           : `${fmtNum(score.input_tokens)} in · ${fmtNum(score.output_tokens)} out · ${fmtNum(score.cache_read_tokens)} cached`,
       })}
     </div>

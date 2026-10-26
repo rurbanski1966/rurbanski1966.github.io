@@ -11,7 +11,7 @@
 // an unauthenticated empty array reach the UI.
 // ---------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=71';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=72';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true },
@@ -290,14 +290,21 @@ const RECORDING_COLS =
   'id, agent_id, agent_name, uploaded_by, title, call_on, duration_seconds, storage_path, ' +
   'transcript_source, status, error_message, created_at, updated_at, script_id, call_type, team_id, ' +
   'reviewer_approved, reviewer_approved_at, ' +
-  'agent:profiles!call_recordings_agent_id_fkey(full_name), script:scripts(name), ' +
-  'team:teams(name), ' +
+  'agent:profiles!call_recordings_agent_id_fkey(full_name, team:teams(name, cost_markup)), script:scripts(name), ' +
+  'team:teams(name, cost_markup), ' +
   'reviewer:profiles!call_recordings_reviewer_approved_by_fkey(full_name), ' +
   'call_scores(overall_score, manual_overall_score, is_overridden, created_at), ' +
   'call_scorecards(percent, possible, manual_percent, manual_possible, created_at)';
 
 // Deliberately omits `transcript`. A list of 50 calls would otherwise pull
 // 50 full transcripts over the wire to render 50 table rows.
+// The multiplier a call's AI costs are billed at: its Agency Assigned's
+// markup, else its agent's own team's — the same team rule ai_cost_events
+// uses (migration 043). SBA is 1.10; every other team is 1.
+export function costMarkup(rec) {
+  return Number(rec?.team?.cost_markup ?? rec?.agent?.team?.cost_markup ?? 1);
+}
+
 export async function listRecordings({ agentId, agentName, status, limit = 100 } = {}) {
   await requireSession();
   let q = supabase

@@ -13,12 +13,12 @@
 // it's only offered on the "By agent" tab; Agency-wide and By team always
 // render the manager layout.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=71';
-import { SCORE_DIMENSIONS } from './config.js?v=71';
+import * as db from './db.js?v=72';
+import { SCORE_DIMENSIONS } from './config.js?v=72';
 import {
   esc, fmtNum, toast, empty, spinner, selectField, statTile, barRow,
   trendChart, legend, trendDelta, exportHtmlToPdf,
-} from './ui.js?v=71';
+} from './ui.js?v=72';
 
 // Fixed per Ryan — not inferred from the data and not to be changed to match
 // whatever the current average happens to be.
