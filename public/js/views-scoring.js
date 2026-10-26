@@ -5,12 +5,13 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=73';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, showsRubricScore } from './config.js?v=73';
+import * as db from './db.js?v=74';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, showsRubricScore } from './config.js?v=74';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
   toast, statTile, barRow, empty, spinner, selectField, loadPdfMake, pdfSafe, loadJSZip, downloadBlob,
-} from './ui.js?v=73';
+  legend, agencyColor,
+} from './ui.js?v=74';
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -2657,6 +2658,7 @@ const LEADERBOARDS = {
     scoreLabel: 'Avg scorecard %',
     emptyText: 'No calls graded against the Medicare scorecard in this period.',
     bands: { good: 85, warning: 74 },
+    chart: true,
   },
 };
 
@@ -2679,14 +2681,17 @@ async function drawLeaderboard(main, board) {
     </div>
     <div class="filters">${selectField('alb-range', 'Period', RANGES, 'year')}</div>
     <div id="alb-tabs" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap"></div>
+    ${board.chart ? '<div class="card" id="alb-chart"></div>' : ''}
     <div class="card" id="alb-body">${spinner()}</div>`;
 
   const rangeSel = document.getElementById('alb-range');
   const tabsHost = document.getElementById('alb-tabs');
   const body = document.getElementById('alb-body');
+  const chartCard = document.getElementById('alb-chart');
 
   const teams = await db.listTeams();
   let activeTab = 'all';
+  let chartView = loadLbView();
 
   function renderTabs() {
     const tabs = [{ key: 'all', label: 'All agents' }, ...teams.map(t => ({ key: t.name, label: t.name }))];
@@ -2713,6 +2718,8 @@ async function drawLeaderboard(main, board) {
       return;
     }
     const filtered = activeTab === 'all' ? rows : rows.filter(r => r.team_name === activeTab);
+
+    if (chartCard) drawChart(rows, filtered, start, end);
 
     if (filtered.length === 0) {
       body.innerHTML = empty(board.emptyText);
@@ -2752,9 +2759,163 @@ async function drawLeaderboard(main, board) {
       </table></div>`;
   }
 
+  // The chart follows the same Period and agency tab as the table. "Agency
+  // averages" compares the agencies side by side instead, so it ignores the
+  // tab, and the tabs are hidden while it's on.
+  function drawChart(allRows, filtered, start, end) {
+    tabsHost.hidden = chartView === 'agency';
+    const items = chartView === 'agency' ? agencyAverages(allRows) : agentBars(filtered);
+    chartCard.innerHTML = `
+      <div class="card__head card__head--wrap">
+        <div>
+          <h2>${chartView === 'agency' ? 'Average score by agency' : 'Scores by agent'}</h2>
+          <div class="muted" style="font-size:12px;margin-top:3px">
+            Avg scorecard % · ${esc(fmtDate(start))} – ${esc(fmtDate(end))}${chartView === 'agent' && activeTab !== 'all' ? ` · ${esc(activeTab)} only` : ''}
+          </div>
+        </div>
+        <div class="seg" role="group" aria-label="Chart view">
+          <button type="button" data-view="agent" aria-pressed="${chartView === 'agent'}">Agents</button>
+          <button type="button" data-view="agency" aria-pressed="${chartView === 'agency'}">Agency averages</button>
+        </div>
+      </div>
+      ${items.length === 0 ? empty(board.emptyText) : lbChartHtml(items, board)}`;
+
+    chartCard.querySelectorAll('[data-view]').forEach(btn => btn.addEventListener('click', () => {
+      if (btn.dataset.view === chartView) return;
+      chartView = btn.dataset.view;
+      saveLbView(chartView);
+      // The tabs hide in agency view; don't leave the table filtered by one.
+      if (chartView === 'agency' && activeTab !== 'all') {
+        activeTab = 'all';
+        renderTabs();
+        draw();
+        return;
+      }
+      drawChart(allRows, filtered, start, end);
+    }));
+    if (items.length) wireLbChart(chartCard.querySelector('.lbc'), items, board);
+  }
+
   rangeSel.addEventListener('change', draw);
   renderTabs();
   await draw();
+}
+
+/* --- Medicare leaderboard chart -------------------------------------------
+   Horizontal bars on a fixed 0-100% scale, so every agent is measured against
+   the same ruler and the 74% / 85% band edges can be drawn across all of
+   them. Bar color is the agent's agency (same colors as the Dashboard);
+   the Good / Needs review / Critical band stays text and icon (the table's
+   chips, the tooltip) so color never means two things at once.
+   -------------------------------------------------------------------------- */
+const LB_VIEW_KEY = 'lana.medicare.chartView';
+function loadLbView() {
+  try { return localStorage.getItem(LB_VIEW_KEY) === 'agency' ? 'agency' : 'agent'; } catch { return 'agent'; }
+}
+function saveLbView(v) {
+  try { localStorage.setItem(LB_VIEW_KEY, v); } catch { /* private window: just don't remember */ }
+}
+
+const AGENCY_ORDER = ['SMC', 'EWSS', 'SBA', 'Unassigned'];
+const agencyLabel = team => (!team || team.startsWith('—') ? 'Unassigned' : team);
+
+function agentBars(rows) {
+  return rows
+    .filter(r => r.avg_score != null)
+    .slice()
+    .sort((a, b) => Number(b.avg_score) - Number(a.avg_score))
+    .map((r, i) => ({
+      rank: i + 1,
+      name: r.full_name,
+      agency: agencyLabel(r.team_name),
+      score: Number(r.avg_score),
+      calls: Number(r.calls_scored),
+      sub: `${agencyLabel(r.team_name)} · ${fmtNum(r.calls_scored)} call${Number(r.calls_scored) === 1 ? '' : 's'}`,
+    }));
+}
+
+// Each agency's average over all of its graded calls (weighted by calls, so
+// an agent with 40 calls counts 40 times, not once).
+function agencyAverages(rows) {
+  const by = new Map();
+  for (const r of rows) {
+    if (r.avg_score == null) continue;
+    const key = agencyLabel(r.team_name);
+    const a = by.get(key) ?? { sum: 0, calls: 0, agents: 0 };
+    a.sum += Number(r.avg_score) * Number(r.calls_scored);
+    a.calls += Number(r.calls_scored);
+    a.agents += 1;
+    by.set(key, a);
+  }
+  return [...by.entries()]
+    .map(([agency, a]) => ({
+      name: agency,
+      agency,
+      score: Math.round((a.sum / a.calls) * 10) / 10,
+      calls: a.calls,
+      sub: `${fmtNum(a.agents)} agent${a.agents === 1 ? '' : 's'} · ${fmtNum(a.calls)} call${a.calls === 1 ? '' : 's'}`,
+    }))
+    .sort((a, b) => b.score - a.score)
+    .map((x, i) => ({ ...x, rank: i + 1 }));
+}
+
+function lbChartHtml(items, board) {
+  const order = a => (AGENCY_ORDER.indexOf(a) + 1) || 99;
+  const agencies = [...new Set(items.map(i => i.agency))].sort((a, b) => order(a) - order(b));
+  const { good, warning } = board.bands;
+  return `
+    ${legend(agencies.map(a => ({ label: a, color: agencyColor(a) })))}
+    <div class="lbc">
+      <div class="bars">
+        ${items.map((it, i) => `
+          <div class="bar lbc__row" tabindex="0" data-i="${i}"
+               aria-label="${esc(`${it.rank}. ${it.name}, ${it.agency}: ${it.score.toFixed(1)}% average over ${it.calls} calls`)}">
+            <div class="bar__rank">${it.rank}</div>
+            <div class="bar__label">${esc(it.name)}<span class="bar__sub">${esc(it.sub)}</span></div>
+            <div class="bar__track lbc__track">
+              <div class="bar__fill" style="width:${Math.max(0, Math.min(100, it.score))}%;background:${agencyColor(it.agency)}"></div>
+              <span class="lbc__mark" style="left:${warning}%"></span>
+              <span class="lbc__mark lbc__mark--pass" style="left:${good}%"></span>
+            </div>
+            <div class="bar__value">${esc(it.score.toFixed(1))}%</div>
+          </div>`).join('')}
+      </div>
+      <div class="lbc__key muted">
+        <span><span class="lbc__keyline lbc__keyline--pass"></span>${good}% pass mark (Good)</span>
+        <span><span class="lbc__keyline"></span>${warning}% (below this is Critical)</span>
+      </div>
+      <div class="chart-tip" style="display:none"></div>
+    </div>`;
+}
+
+function wireLbChart(wrap, items, board) {
+  const tip = wrap.querySelector('.chart-tip');
+  const levelText = { good: '✓ Good', warning: '! Needs review', critical: '✕ Critical' };
+  function show(row) {
+    if (!row) { tip.style.display = 'none'; return; }
+    const it = items[Number(row.dataset.i)];
+    tip.innerHTML = `
+      <div class="chart-tip__title">${esc(it.name)}</div>
+      <div class="chart-tip__row"><span class="legend__swatch" style="background:${agencyColor(it.agency)}"></span>Agency<b>${esc(it.agency)}</b></div>
+      <div class="chart-tip__row">Avg scorecard %<b>${esc(it.score.toFixed(1))}%</b></div>
+      <div class="chart-tip__row">Calls graded<b>${esc(fmtNum(it.calls))}</b></div>
+      <div class="chart-tip__row chart-tip__total">Status<b>${esc(levelText[scoreLevel(it.score, board.bands)])}</b></div>`;
+    tip.style.display = '';
+    // Beside the end of the bar, under its row; flipped left near the edge.
+    const track = row.querySelector('.lbc__track');
+    const wr = wrap.getBoundingClientRect();
+    const tr = track.getBoundingClientRect();
+    const fillEnd = tr.left - wr.left + (tr.width * Math.min(100, it.score)) / 100;
+    const w = tip.offsetWidth;
+    tip.style.left = `${fillEnd + 12 + w > wrap.clientWidth ? Math.max(0, fillEnd - 12 - w) : fillEnd + 12}px`;
+    tip.style.top = `${row.offsetTop + row.offsetHeight + 4}px`;
+  }
+  wrap.querySelectorAll('.lbc__row').forEach(row => {
+    row.addEventListener('pointerenter', () => show(row));
+    row.addEventListener('focus', () => show(row));
+    row.addEventListener('blur', () => show(null));
+  });
+  wrap.addEventListener('pointerleave', () => show(null));
 }
 
 // Fixed day/week/month grading spend — always "right now," independent of

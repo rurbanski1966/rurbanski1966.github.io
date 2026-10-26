@@ -555,6 +555,28 @@ code {
 .bar.is-me .bar__label { font-weight: 700; }
 .bar.is-me .bar__fill  { background: var(--series-2); }
 
+/* Medicare leaderboard chart: bar rows on a fixed 0-100% track, with the
+   band edges (74% / 85%) drawn through every track. */
+.lbc { position: relative; }
+.lbc .bars { gap: 10px; }
+.lbc__row { border-radius: 6px; outline-offset: 3px; }
+.lbc__row:focus-visible { outline: 2px solid var(--brand); }
+.lbc__track { position: relative; height: 18px; overflow: visible; }
+.lbc__track .bar__fill { border-radius: 0 4px 4px 0; }
+.lbc__mark {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 0;
+  border-left: 1px dashed var(--text-muted);
+  pointer-events: none;
+}
+.lbc__mark--pass { border-left: 2px solid var(--text-secondary); }
+.lbc__key { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; margin-top: 14px; }
+.lbc__key > span { display: inline-flex; align-items: center; gap: 6px; }
+.lbc__keyline { display: inline-block; width: 0; height: 12px; border-left: 1px dashed var(--text-muted); }
+.lbc__keyline--pass { border-left: 2px solid var(--text-secondary); }
+
 /* --- Legend & status chips ----------------------------------------------- */
 .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 12px; }
 .legend__item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); }

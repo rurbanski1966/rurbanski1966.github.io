@@ -2,7 +2,7 @@
 // Rendering helpers: formatting, date ranges, and the small set of chart
 // primitives the dashboard needs (stat tile, meter, bar row).
 // ---------------------------------------------------------------------------
-import { TIMEZONE, STATUSES, APPT_STATUSES } from './config.js?v=73';
+import { TIMEZONE, STATUSES, APPT_STATUSES } from './config.js?v=74';
 
 /* --- escaping ------------------------------------------------------------ */
 // Every value that reaches innerHTML goes through this. Client names and notes
@@ -127,6 +127,16 @@ export function barRow({ rank, label, sub, value, display, max, color, highlight
       <div class="bar__value">${esc(display)}</div>
     </div>`;
 }
+
+// Agency colors (css tokens --agency-*), shared by every chart that splits
+// by agency so an agency is the same color on every page. Anything that
+// isn't one of the three — no team, a team added later — is the neutral.
+export const AGENCY_COLORS = {
+  SMC:  'var(--agency-smc)',
+  EWSS: 'var(--agency-ewss)',
+  SBA:  'var(--agency-sba)',
+};
+export const agencyColor = name => AGENCY_COLORS[name] ?? 'var(--agency-none)';
 
 export function legend(items) {
   return `<div class="legend">${items

@@ -2,12 +2,12 @@
 // Agent-facing views: dashboard, my sales.
 // Every view exports render(main, ctx) and wires its own listeners.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=73';
-import { CATEGORIES } from './config.js?v=73';
+import * as db from './db.js?v=74';
+import { CATEGORIES } from './config.js?v=74';
 import {
   esc, fmtMoney, fmtMoneyExact, fmtNum, fmtPct, fmtDate,
-  toast, statusChip, empty, spinner, selectField, legend,
-} from './ui.js?v=73';
+  toast, statusChip, empty, spinner, selectField, legend, AGENCY_COLORS,
+} from './ui.js?v=74';
 
 const SERIES = {
   mapd:      'var(--series-1)',
@@ -22,9 +22,9 @@ const SERIES = {
 // validator). Unassigned is a neutral gray, not a fourth hue: it's a to-do,
 // not an agency. `m` is the my_metrics() column prefix.
 const AGENCIES = [
-  { key: 'SMC',  color: 'var(--agency-smc)',  m: 'smc' },
-  { key: 'EWSS', color: 'var(--agency-ewss)', m: 'ewss' },
-  { key: 'SBA',  color: 'var(--agency-sba)',  m: 'sba' },
+  { key: 'SMC',  color: AGENCY_COLORS.SMC,  m: 'smc' },
+  { key: 'EWSS', color: AGENCY_COLORS.EWSS, m: 'ewss' },
+  { key: 'SBA',  color: AGENCY_COLORS.SBA,  m: 'sba' },
 ];
 const UNASSIGNED = { key: 'Unassigned', color: 'var(--agency-none)', m: 'unassigned' };
 
