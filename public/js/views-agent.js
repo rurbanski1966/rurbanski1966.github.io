@@ -2,12 +2,12 @@
 // Agent-facing views: dashboard, my sales.
 // Every view exports render(main, ctx) and wires its own listeners.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=70';
-import { CATEGORIES } from './config.js?v=70';
+import * as db from './db.js?v=71';
+import { CATEGORIES } from './config.js?v=71';
 import {
   esc, fmtMoneyExact, fmtNum, fmtDate,
   toast, statTile, statusChip, empty, spinner, selectField,
-} from './ui.js?v=70';
+} from './ui.js?v=71';
 
 const SERIES = {
   mapd:      'var(--series-1)',
@@ -54,6 +54,10 @@ export async function dashboard(main, ctx) {
         ${statTile({ label: 'EWSS Weekly spend', value: fmtMoneyExact(m.ewss_weekly_spend), note: 'EWSS calls, Monday–Sunday' })}
         ${statTile({ label: 'EWSS Monthly spend', value: fmtMoneyExact(m.ewss_monthly_spend), note: 'EWSS calls, this month' })}
         ${statTile({ label: 'EWSS Yearly spend', value: fmtMoneyExact(m.ewss_yearly_spend), note: 'EWSS calls, year to date' })}
+        ${statTile({ label: 'SBA Daily spend', value: fmtMoneyExact(m.sba_daily_spend ?? 0), note: "SBA calls, today" })}
+        ${statTile({ label: 'SBA Weekly spend', value: fmtMoneyExact(m.sba_weekly_spend ?? 0), note: 'SBA calls, Monday–Sunday' })}
+        ${statTile({ label: 'SBA Monthly spend', value: fmtMoneyExact(m.sba_monthly_spend ?? 0), note: 'SBA calls, this month' })}
+        ${statTile({ label: 'SBA Yearly spend', value: fmtMoneyExact(m.sba_yearly_spend ?? 0), note: 'SBA calls, year to date' })}
       </div>
       ${unassignedTilesHtml(m)}
       <p class="muted" style="font-size:12px;margin:4px 0 0">
@@ -82,8 +86,8 @@ export async function dashboard(main, ctx) {
   if (isAdmin && unassignedCalls.length) drawUnassignedCalls(unassignedCalls);
 }
 
-// Spend that belongs to neither SMC nor EWSS. Shown only when there is some,
-// as a prompt to fix it: every cost is meant to land in one of the two.
+// Spend that belongs to none of SMC, EWSS or SBA. Shown only when there is some,
+// as a prompt to fix it: every cost is meant to land in one of the three.
 const hasUnassigned = m => [m.unassigned_daily_spend, m.unassigned_weekly_spend, m.unassigned_monthly_spend, m.unassigned_yearly_spend]
   .some(v => Number(v) > 0);
 
@@ -91,24 +95,24 @@ function unassignedTilesHtml(m) {
   if (!hasUnassigned(m)) return '';
   return `
     <div class="kpis">
-      ${statTile({ label: 'Unassigned Daily spend', value: fmtMoneyExact(m.unassigned_daily_spend), note: 'No agency set — not in SMC or EWSS' })}
-      ${statTile({ label: 'Unassigned Weekly spend', value: fmtMoneyExact(m.unassigned_weekly_spend), note: 'No agency set — not in SMC or EWSS' })}
-      ${statTile({ label: 'Unassigned Monthly spend', value: fmtMoneyExact(m.unassigned_monthly_spend), note: 'No agency set — not in SMC or EWSS' })}
-      ${statTile({ label: 'Unassigned Yearly spend', value: fmtMoneyExact(m.unassigned_yearly_spend), note: 'No agency set — not in SMC or EWSS' })}
+      ${statTile({ label: 'Unassigned Daily spend', value: fmtMoneyExact(m.unassigned_daily_spend), note: 'No agency set — not in SMC, EWSS or SBA' })}
+      ${statTile({ label: 'Unassigned Weekly spend', value: fmtMoneyExact(m.unassigned_weekly_spend), note: 'No agency set — not in SMC, EWSS or SBA' })}
+      ${statTile({ label: 'Unassigned Monthly spend', value: fmtMoneyExact(m.unassigned_monthly_spend), note: 'No agency set — not in SMC, EWSS or SBA' })}
+      ${statTile({ label: 'Unassigned Yearly spend', value: fmtMoneyExact(m.unassigned_yearly_spend), note: 'No agency set — not in SMC, EWSS or SBA' })}
     </div>`;
 }
 
 // The calls behind the Unassigned figure. Setting Agency Assigned on each
-// (Call reviews → Edit) moves its cost into SMC or EWSS everywhere at once.
+// (Call reviews → Edit) moves its cost into SMC, EWSS or SBA everywhere at once.
 function drawUnassignedCalls(rows) {
   document.getElementById('agent-spend').insertAdjacentHTML('beforebegin', `
     <div class="card" id="unassigned-costs">
       <div class="card__head">
-        <h2>Costs not assigned to SMC or EWSS</h2>
+        <h2>Costs not assigned to SMC, EWSS or SBA</h2>
         <span class="muted">${fmtNum(rows.length)} call${rows.length === 1 ? '' : 's'}</span>
       </div>
       <p class="muted" style="margin:0 0 12px">
-        These calls have no Agency Assigned and their agent has no team, so their cost isn't in either category.
+        These calls have no Agency Assigned and their agent has no team, so their cost isn't in any category.
         Open each one on Call reviews, click Edit, and set Agency Assigned.
       </p>
       <div class="tablewrap"><table>

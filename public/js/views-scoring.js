@@ -5,12 +5,12 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=70';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, showsRubricScore } from './config.js?v=70';
+import * as db from './db.js?v=71';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, showsRubricScore } from './config.js?v=71';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
   toast, statTile, barRow, empty, spinner, selectField, loadPdfMake, pdfSafe, loadJSZip, downloadBlob,
-} from './ui.js?v=70';
+} from './ui.js?v=71';
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -322,11 +322,11 @@ export async function reviews(main, ctx) {
   const activePeople = people.filter(p => p.active);
   const nameToId = new Map(activePeople.map(p => [(p.full_name || p.email).trim().toLowerCase(), p.id]));
 
-  // Every call's AI cost is reported under SMC or EWSS: its Agency Assigned,
-  // else its agent's own team (migration 039). A call with neither would
+  // Every call's AI cost is reported under SMC, EWSS or SBA: its Agency Assigned,
+  // else its agent's own team (migrations 039, 042). A call with neither would
   // land in Unassigned, so the form asks for one before saving.
   const teamOfAgent = new Map(people.map(p => [p.id, p.team_id]));
-  const NEEDS_TEAM_MSG = "Set Agency Assigned to SMC or EWSS. This agent has no team, so the call's costs wouldn't be counted under either.";
+  const NEEDS_TEAM_MSG = "Set Agency Assigned to SMC, EWSS or SBA. This agent has no team, so the call's costs wouldn't be counted under any of them.";
   const agentTeamFor = agentId => (agentId ? (isAdmin ? teamOfAgent.get(agentId) : ctx.profile.team_id) : null);
 
   /* --- new recording --- */
@@ -378,7 +378,7 @@ export async function reviews(main, ctx) {
           ${teams.map(t => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}
         </select>
         <span class="muted" style="font-size:12px">
-          Attributes this call to EWSS or SMC on the leaderboard and spend totals. Leave blank to use the agent's own team; required if the agent has none.
+          Attributes this call to SMC, EWSS or SBA on the leaderboard and spend totals. Leave blank to use the agent's own team; required if the agent has none.
         </span>
       </label>
 

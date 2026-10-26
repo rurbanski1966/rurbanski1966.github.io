@@ -11,7 +11,7 @@
 // an unauthenticated empty array reach the UI.
 // ---------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=70';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=71';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true },
@@ -245,7 +245,7 @@ export async function agentSpendReport() {
   return unwrap(await supabase.rpc('agent_spend_report'));
 }
 
-// Calls whose AI cost is in neither SMC nor EWSS: no Agency Assigned and an
+// Calls whose AI cost is in none of SMC, EWSS or SBA: no Agency Assigned and an
 // agent with no team (migration 039). Admin-only; empty for anyone else.
 // Before migration 039 has run the function doesn't exist; the Dashboard
 // shows no list rather than failing to load.
