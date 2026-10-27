@@ -11,7 +11,7 @@
 // an unauthenticated empty array reach the UI.
 // ---------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=74';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=75';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true },
@@ -264,6 +264,29 @@ export async function agencySpendDaily(start, end) {
   await requireSession();
   const { data, error } = await supabase.rpc('agency_spend_daily', { p_start: start, p_end: end });
   if (error) { console.warn('agency_spend_daily:', error.message); return null; }
+  return data ?? [];
+}
+
+/* --- billing -------------------------------------------------------------- */
+// Each agency's AI grading balance (migration 046): billed charges, payments
+// through Stripe, balance due. Admins get every agency, everyone else their
+// own. Before 046 has run the function doesn't exist; returns null so the
+// Billing page can say so.
+export async function agencyBalances() {
+  await requireSession();
+  const { data, error } = await supabase.rpc('agency_balances');
+  if (error) { console.warn('agency_balances:', error.message); return null; }
+  return data ?? [];
+}
+
+export async function agencyPayments({ limit = 50 } = {}) {
+  await requireSession();
+  const { data, error } = await supabase
+    .from('agency_payments')
+    .select('id, team_id, amount_usd, paid_by_email, paid_at, team:teams(name), payer:profiles(full_name)')
+    .order('paid_at', { ascending: false })
+    .limit(limit);
+  if (error) { console.warn('agency_payments:', error.message); return []; }
   return data ?? [];
 }
 
@@ -542,6 +565,9 @@ async function invokeFunction(name, body) {
 
 export const scoreCall = recordingId => invokeFunction('score-call', { recording_id: recordingId });
 export const transcribeCall = recordingId => invokeFunction('transcribe-call', { recording_id: recordingId });
+// Returns { url } for the Stripe-hosted payment page. The amount is worked
+// out server-side; the browser only says which agency.
+export const startCheckout = teamId => invokeFunction('create-checkout', { team_id: teamId });
 
 // AI-written coaching note built only from the reviewer's own manual
 // changes — see summarize-review. Safe to call repeatedly: the function

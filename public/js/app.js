@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
 // Boot, auth gate, hash router, nav.
 // ---------------------------------------------------------------------------
-import { isConfigured, SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=74';
-import { toast, esc } from './ui.js?v=74';
+import { isConfigured, SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=75';
+import { toast, esc } from './ui.js?v=75';
 
 // Bump when debugging a stale-cache problem: if the browser doesn't show this
 // exact string, it is running old code and nothing else you observe is real.
@@ -39,13 +39,14 @@ if (!isConfigured()) {
 
 console.info(`Lana ${BUILD} — config loaded, URL ${SUPABASE_URL}`);
 
-const db = await import('./db.js?v=74');
-const agentViews = await import('./views-agent.js?v=74');
-const adminViews = await import('./views-admin.js?v=74');
-const scoringViews = await import('./views-scoring.js?v=74');
-const rubricViews = await import('./views-rubric.js?v=74');
-const accountViews = await import('./views-account.js?v=74');
-const analyticsViews = await import('./views-analytics.js?v=74');
+const db = await import('./db.js?v=75');
+const agentViews = await import('./views-agent.js?v=75');
+const adminViews = await import('./views-admin.js?v=75');
+const scoringViews = await import('./views-scoring.js?v=75');
+const rubricViews = await import('./views-rubric.js?v=75');
+const accountViews = await import('./views-account.js?v=75');
+const analyticsViews = await import('./views-analytics.js?v=75');
+const billingViews = await import('./views-billing.js?v=75');
 
 const ctx = { profile: null };
 
@@ -73,6 +74,9 @@ const ROUTES = {
   // ranking — reviewer-facing, so admin-only like the rest of this section.
   '#/admin/analytics':      { title: 'Analytics',   render: analyticsViews.analytics, roles: ['admin'] },
   '#/admin/reports':        { title: 'Reports',     render: adminViews.reports,     roles: ['admin'] },
+
+  // Every role: anyone in an agency can pay its balance.
+  '#/billing':              { title: 'Billing',     render: billingViews.billing,   roles: ['agent', 'dialer', 'admin'] },
 
   // Not in NAV — reached from the sidebar's whoami link, not the menu, since
   // it applies equally to every role.
@@ -107,6 +111,7 @@ function resolve(hash) {
 const NAV = [
   { section: 'Agent',    items: ['#/dashboard', '#/my-sales'] },
   { section: 'Coaching', items: ['#/reviews', '#/rubric', '#/leaderboard', '#/leaderboard/medicare'] },
+  { section: 'Account',  items: ['#/billing'] },
   { section: 'Admin',    items: ['#/admin/agents', '#/admin/scripts', '#/admin/scorecard', '#/admin/calibration', '#/admin/analytics', '#/admin/reports'] },
 ];
 

@@ -447,6 +447,9 @@ code {
 }
 .agency-card__periods dt { font-size: 11px; color: var(--text-muted); }
 .agency-card__periods dd { margin: 2px 0 0; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+/* Billing: the agency card's action row (Pay button or status). */
+.bill-pay { width: 100%; margin-top: 14px; }
+.bill-note { margin: 12px 0 0; font-size: 12px; }
 .agency-card__flag { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 0; font-size: 12px; }
 .dash-note { font-size: 12px; margin: 0 0 18px; }
 

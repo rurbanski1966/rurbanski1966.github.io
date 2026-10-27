@@ -6,3 +6,7 @@
 # EnrollHere has no Supabase login; the function checks its own token.
 [functions.enrollhere-webhook]
 verify_jwt = false
+
+# Stripe has no Supabase login; the function checks the Stripe-Signature header.
+[functions.stripe-webhook]
+verify_jwt = false
