@@ -7,8 +7,8 @@
 // there; Stripe sends the person back here, and the payment shows up once
 // Stripe's webhook has recorded it (normally a few seconds).
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=77';
-import { esc, toast, fmtMoneyExact, fmtDate, empty, spinner, agencyColor } from './ui.js?v=77';
+import * as db from './db.js?v=78';
+import { esc, toast, fmtMoneyExact, fmtDate, empty, spinner, agencyColor } from './ui.js?v=78';
 
 // Stripe's smallest card charge in USD.
 const MIN_PAYMENT = 0.5;
@@ -83,7 +83,7 @@ async function draw(main, ctx) {
             <tr>
               <td>${esc(fmtDate(localDay(p.paid_at)))}</td>
               <td><span class="legend__swatch legend__swatch--inline" style="background:${agencyColor(p.team?.name)}"></span>${esc(p.team?.name ?? '—')}</td>
-              <td>${p.kind === 'write_off' ? 'Zeroed out' : 'Card payment'}</td>
+              <td>${p.kind === 'write_off' ? 'Paid' : 'Card payment'}</td>
               <td>${esc(p.payer?.full_name || p.paid_by_email || '—')}</td>
               <td class="num">${esc(fmtMoneyExact(p.amount_usd))}</td>
             </tr>`).join('')}
