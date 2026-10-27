@@ -7,8 +7,8 @@
 // there; Stripe sends the person back here, and the payment shows up once
 // Stripe's webhook has recorded it (normally a few seconds).
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=76';
-import { esc, toast, fmtMoneyExact, fmtDate, empty, spinner, agencyColor } from './ui.js?v=76';
+import * as db from './db.js?v=77';
+import { esc, toast, fmtMoneyExact, fmtDate, empty, spinner, agencyColor } from './ui.js?v=77';
 
 // Stripe's smallest card charge in USD.
 const MIN_PAYMENT = 0.5;
@@ -102,7 +102,7 @@ function balanceCardHtml(b, isMine, isAdmin) {
   } else if (balance >= MIN_PAYMENT && isMine) {
     action = `<button class="btn btn--primary bill-pay" type="button" data-pay="${esc(b.team_id)}">Pay ${esc(fmtMoneyExact(balance))}</button>`;
   } else if (balance >= MIN_PAYMENT) {
-    action = `<p class="muted bill-note">Paid by a user in ${esc(b.team_name)}.</p>`;
+    action = `<p class="muted bill-note">Waiting on ${esc(b.team_name)} to pay.</p>`;
   } else if (balance > 0) {
     action = `<p class="muted bill-note">Under the $0.50 card minimum. It carries over to the next payment.</p>`;
   } else {
