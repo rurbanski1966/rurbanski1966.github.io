@@ -5,13 +5,13 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=75';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, showsRubricScore } from './config.js?v=75';
+import * as db from './db.js?v=76';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, showsRubricScore } from './config.js?v=76';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
   toast, statTile, barRow, empty, spinner, selectField, loadPdfMake, pdfSafe, loadJSZip, downloadBlob,
   legend, agencyColor,
-} from './ui.js?v=75';
+} from './ui.js?v=76';
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -775,7 +775,7 @@ export async function reviewDetail(main, ctx, recordingId) {
           </form>` : ''}
       </div>
 
-      <div id="score-header">${score ? scoreHeaderHtml(score, db.costMarkup(rec)) : ''}</div>
+      <div id="score-header">${score ? scoreHeaderHtml(score, db.costMarkup(rec, score.created_at)) : ''}</div>
       <div id="override-area">${score && ctx.profile.role === 'admin' ? spinner() : ''}</div>
       <div id="dimensions-area">${score ? spinner() : ''}</div>
       <div id="findings-area">${score ? spinner() : ''}</div>
@@ -1682,7 +1682,7 @@ async function drawScorecard(rec, ctx, turns, jumpToTurn = () => {}) {
         <button class="btn btn--primary" type="button" id="sc-report-open" style="margin-bottom:14px">Detailed call rubric report</button>
         <p class="muted" style="margin:0;font-size:13px">
           N/A items are left out of the score. Version ${esc(grade.scorecard_version)} ·
-          graded ${esc(fmtDate(grade.created_at))}${isAdmin && grade.cost_usd != null ? ` · cost ${esc(fmtMoneyExact(grade.cost_usd * db.costMarkup(rec)))}` : ''}.
+          graded ${esc(fmtDate(grade.created_at))}${isAdmin && grade.cost_usd != null ? ` · cost ${esc(fmtMoneyExact(grade.cost_usd * db.costMarkup(rec, grade.created_at)))}` : ''}.
           ${isAdmin ? 'Changes save as you make them.' : ''}
         </p>
         <div class="sc-filters">

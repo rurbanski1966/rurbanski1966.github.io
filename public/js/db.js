@@ -11,7 +11,7 @@
 // an unauthenticated empty array reach the UI.
 // ---------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=75';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=76';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true },
@@ -283,11 +283,18 @@ export async function agencyPayments({ limit = 50 } = {}) {
   await requireSession();
   const { data, error } = await supabase
     .from('agency_payments')
-    .select('id, team_id, amount_usd, paid_by_email, paid_at, team:teams(name), payer:profiles(full_name)')
+    .select('id, team_id, amount_usd, kind, paid_by_email, paid_at, team:teams(name), payer:profiles(full_name)')
     .order('paid_at', { ascending: false })
     .limit(limit);
   if (error) { console.warn('agency_payments:', error.message); return []; }
   return data ?? [];
+}
+
+// EWSS only, admins only (migration 048): records a write-off for EWSS's
+// current balance. Returns the amount cleared.
+export async function zeroOutBalance(teamId) {
+  await requireSession();
+  return unwrap(await supabase.rpc('zero_out_agency_balance', { p_team_id: teamId }));
 }
 
 /* --- analytics ------------------------------------------------------------ */
@@ -324,19 +331,28 @@ const RECORDING_COLS =
   'id, agent_id, agent_name, uploaded_by, title, call_on, duration_seconds, storage_path, ' +
   'transcript_source, status, error_message, created_at, updated_at, script_id, call_type, team_id, ' +
   'reviewer_approved, reviewer_approved_at, ' +
-  'agent:profiles!call_recordings_agent_id_fkey(full_name, team:teams(name, cost_markup)), script:scripts(name), ' +
-  'team:teams(name, cost_markup), ' +
+  'agent:profiles!call_recordings_agent_id_fkey(full_name, team:teams(name, cost_markup, markups:team_cost_markups(markup, effective_from))), script:scripts(name), ' +
+  'team:teams(name, cost_markup, markups:team_cost_markups(markup, effective_from)), ' +
   'reviewer:profiles!call_recordings_reviewer_approved_by_fkey(full_name), ' +
   'call_scores(overall_score, manual_overall_score, is_overridden, created_at), ' +
   'call_scorecards(percent, possible, manual_percent, manual_possible, created_at)';
 
 // Deliberately omits `transcript`. A list of 50 calls would otherwise pull
 // 50 full transcripts over the wire to render 50 table rows.
-// The multiplier a call's AI costs are billed at: its Agency Assigned's
-// markup, else its agent's own team's — the same team rule ai_cost_events
-// uses (migration 043). SBA is 1.10; every other team is 1.
-export function costMarkup(rec) {
-  return Number(rec?.team?.cost_markup ?? rec?.agent?.team?.cost_markup ?? 1);
+// The multiplier a call's AI cost is billed at: the markup of its Agency
+// Assigned, else its agent's own team, in effect at `at` (when the cost was
+// incurred; now for a grade that just finished). Same rule as
+// ai_cost_events / cost_markup_at() (migration 047): SBA 1.10 always, SMC
+// 1.025 from 2026-10-26, everyone else 1.
+export function costMarkup(rec, at = new Date()) {
+  const team = rec?.team ?? rec?.agent?.team;
+  if (!team) return 1;
+  if (!Array.isArray(team.markups)) return Number(team.cost_markup ?? 1);
+  const t = new Date(at).getTime();
+  const current = team.markups
+    .filter(m => new Date(m.effective_from).getTime() <= t)
+    .sort((a, b) => new Date(b.effective_from) - new Date(a.effective_from))[0];
+  return Number(current?.markup ?? 1);
 }
 
 export async function listRecordings({ agentId, agentName, status, limit = 100 } = {}) {

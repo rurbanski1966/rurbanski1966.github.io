@@ -7,11 +7,16 @@
 // there; Stripe sends the person back here, and the payment shows up once
 // Stripe's webhook has recorded it (normally a few seconds).
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=75';
-import { esc, toast, fmtMoneyExact, fmtDate, empty, spinner, agencyColor } from './ui.js?v=75';
+import * as db from './db.js?v=76';
+import { esc, toast, fmtMoneyExact, fmtDate, empty, spinner, agencyColor } from './ui.js?v=76';
 
 // Stripe's smallest card charge in USD.
 const MIN_PAYMENT = 0.5;
+
+// EWSS owns the platform and already pays the AI bill directly, so its
+// balance is never paid by card: an admin zeroes it out instead
+// (migration 048).
+const OWNER_AGENCY = 'EWSS';
 
 // A payment timestamp as the viewer's own calendar day (a UTC slice would
 // show an evening payment as the next day).
@@ -62,20 +67,23 @@ async function draw(main, ctx) {
   }
 
   const myTeam = ctx.profile.team_id;
-  cardsHost.innerHTML = `<div class="agency-grid">${balances.map(b => balanceCardHtml(b, b.team_id === myTeam)).join('')}</div>`;
+  const isAdmin = ctx.profile.role === 'admin';
+  cardsHost.innerHTML = `<div class="agency-grid">${balances.map(b => balanceCardHtml(b, b.team_id === myTeam, isAdmin)).join('')}</div>`;
   cardsHost.querySelectorAll('[data-pay]').forEach(btn => btn.addEventListener('click', () => pay(btn)));
+  cardsHost.querySelectorAll('[data-zero]').forEach(btn => btn.addEventListener('click', () => zeroOut(btn, main, ctx)));
 
   historyHost.hidden = false;
   historyHost.innerHTML = `
     <h2>Payment history</h2>
     ${payments.length === 0 ? empty('No payments yet.') : `
       <div class="tablewrap"><table>
-        <thead><tr><th>Date</th><th>Agency</th><th>Paid by</th><th class="num">Amount</th></tr></thead>
+        <thead><tr><th>Date</th><th>Agency</th><th>Type</th><th>By</th><th class="num">Amount</th></tr></thead>
         <tbody>
           ${payments.map(p => `
             <tr>
               <td>${esc(fmtDate(localDay(p.paid_at)))}</td>
               <td><span class="legend__swatch legend__swatch--inline" style="background:${agencyColor(p.team?.name)}"></span>${esc(p.team?.name ?? '—')}</td>
+              <td>${p.kind === 'write_off' ? 'Zeroed out' : 'Card payment'}</td>
               <td>${esc(p.payer?.full_name || p.paid_by_email || '—')}</td>
               <td class="num">${esc(fmtMoneyExact(p.amount_usd))}</td>
             </tr>`).join('')}
@@ -83,10 +91,15 @@ async function draw(main, ctx) {
       </table></div>`}`;
 }
 
-function balanceCardHtml(b, isMine) {
+function balanceCardHtml(b, isMine, isAdmin) {
   const balance = Number(b.balance_usd);
   let action;
-  if (balance >= MIN_PAYMENT && isMine) {
+  if (b.team_name === OWNER_AGENCY && balance > 0) {
+    action = isAdmin
+      ? `<button class="btn bill-pay" type="button" data-zero="${esc(b.team_id)}" data-amount="${esc(fmtMoneyExact(balance))}">Zero out balance</button>
+         <p class="muted bill-note">EWSS’s AI usage is already paid through the Claude API bill.</p>`
+      : `<p class="muted bill-note">Covered by EWSS. An admin clears this balance.</p>`;
+  } else if (balance >= MIN_PAYMENT && isMine) {
     action = `<button class="btn btn--primary bill-pay" type="button" data-pay="${esc(b.team_id)}">Pay ${esc(fmtMoneyExact(balance))}</button>`;
   } else if (balance >= MIN_PAYMENT) {
     action = `<p class="muted bill-note">Paid by a user in ${esc(b.team_name)}.</p>`;
@@ -111,6 +124,23 @@ function balanceCardHtml(b, isMine) {
       </dl>
       ${action}
     </section>`;
+}
+
+async function zeroOut(btn, main, ctx) {
+  if (!confirm(`Zero out EWSS's balance of ${btn.dataset.amount}?
+
+It's recorded in the history as zeroed out by you. Nothing is charged.`)) return;
+  btn.disabled = true;
+  btn.textContent = 'Zeroing out…';
+  try {
+    const cleared = await db.zeroOutBalance(btn.dataset.zero);
+    toast(Number(cleared) > 0 ? `EWSS balance of ${fmtMoneyExact(cleared)} zeroed out.` : 'EWSS had nothing to clear.', 'ok');
+    await draw(main, ctx);
+  } catch (err) {
+    toast(err.message, 'error');
+    btn.disabled = false;
+    btn.textContent = 'Zero out balance';
+  }
 }
 
 async function pay(btn) {
