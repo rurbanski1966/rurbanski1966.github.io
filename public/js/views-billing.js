@@ -7,8 +7,8 @@
 // there; Stripe sends the person back here, and the payment shows up once
 // Stripe's webhook has recorded it (normally a few seconds).
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=78';
-import { esc, toast, fmtMoneyExact, fmtDate, empty, spinner, agencyColor } from './ui.js?v=78';
+import * as db from './db.js?v=79';
+import { esc, toast, fmtMoneyExact, fmtDate, empty, spinner, agencyColor } from './ui.js?v=79';
 
 // Stripe's smallest card charge in USD.
 const MIN_PAYMENT = 0.5;

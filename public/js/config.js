@@ -32,6 +32,8 @@ export const ROLES = [
   { value: 'agent',  label: 'Agent' },
   { value: 'admin',  label: 'Admin' },
   { value: 'dialer', label: 'Dialer' },
+  // A test login: every tab, no data, no changes (migration 049).
+  { value: 'demo',   label: 'Demo (no data)' },
 ];
 
 // A call's category, separate from CATEGORIES above, which is for sales

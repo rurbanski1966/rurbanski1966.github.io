@@ -28,7 +28,13 @@ const json = (body: unknown, status = 200) =>
     headers: { ...CORS, 'Content-Type': 'application/json' },
   });
 
-const ROLES = ['agent', 'dialer', 'admin'];
+const ROLES = ['agent', 'dialer', 'admin', 'demo'];
+
+// "demo" isn't a database role: a demo (test) login is stored as a dialer,
+// the role with the least access, with is_demo set (migration 049), which
+// makes the API refuse it everything but its own profile.
+const profileRole = (role: string) =>
+  role === 'demo' ? { role: 'dialer', is_demo: true } : { role, is_demo: false };
 
 Deno.serve(async req => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
@@ -92,7 +98,7 @@ Deno.serve(async req => {
     if (role !== 'agent') {
       const { error: roleError } = await serviceClient
         .from('profiles')
-        .update({ role })
+        .update(profileRole(role))
         .eq('id', created.user.id);
       if (roleError) return json({ error: roleError.message }, 400);
     }
@@ -167,7 +173,7 @@ Deno.serve(async req => {
 
     const { error: profileError } = await serviceClient
       .from('profiles')
-      .update({ full_name: fullName, email, role, team_id: teamId })
+      .update({ full_name: fullName, email, ...profileRole(role), team_id: teamId })
       .eq('id', userId);
     if (profileError) return json({ error: profileError.message }, 400);
 

@@ -11,7 +11,7 @@
 // an unauthenticated empty array reach the UI.
 // ---------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=78';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=79';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true },
@@ -29,6 +29,60 @@ async function requireSession() {
   if (error) throw error;
   if (!data.session) throw new NotSignedIn();
   return data.session;
+}
+
+/* --- demo (test) logins ---------------------------------------------------
+   A demo login sees every tab with nothing in it (migration 049). The
+   database is the real lock: it refuses a demo login every request except
+   reading its own profile. This side just answers every read with an empty
+   result up front, so pages render empty instead of showing errors, and
+   every save, upload, scoring run or payment says changes are turned off.
+   -------------------------------------------------------------------------- */
+const DEMO_MSG = 'Demo login: changes are turned off.';
+const WRITES = new Set(['insert', 'update', 'upsert', 'delete']);
+let demoMode = false;
+export const isDemo = () => demoMode;
+
+// Stands in for a PostgREST query: any chain of builder calls, awaited,
+// gives an empty read (or a refusal, if the chain included a write).
+function demoQuery() {
+  let write = false;
+  let single = false;
+  const q = new Proxy(() => {}, {
+    get(_t, prop) {
+      if (prop === 'then') {
+        const res = write
+          ? { data: null, error: { message: DEMO_MSG } }
+          : { data: single ? null : [], error: null, count: 0 };
+        return (ok, bad) => Promise.resolve(res).then(ok, bad);
+      }
+      return () => {
+        if (WRITES.has(prop)) write = true;
+        if (prop === 'single' || prop === 'maybeSingle') single = true;
+        return q;
+      };
+    },
+  });
+  return q;
+}
+
+function enableDemo() {
+  if (demoMode) return;
+  demoMode = true;
+  const realFrom = supabase.from.bind(supabase);
+  const refuse = async () => ({ data: null, error: { message: DEMO_MSG } });
+  // Own profile stays real: signing in and the Agents page read it, and the
+  // database allows exactly that.
+  Object.defineProperty(supabase, 'from', {
+    value: table => (table === 'profiles' ? realFrom(table) : demoQuery()),
+  });
+  Object.defineProperty(supabase, 'rpc', { value: () => demoQuery() });
+  Object.defineProperty(supabase, 'functions', {
+    value: { invoke: async () => ({ data: null, error: new Error(DEMO_MSG) }) },
+  });
+  Object.defineProperty(supabase, 'storage', {
+    value: { from: () => new Proxy({}, { get: () => refuse }) },
+  });
 }
 
 // Unwraps a PostgREST response, turning `{ error }` into a thrown Error.
@@ -72,7 +126,7 @@ export async function myProfile() {
   const row = unwrap(
     await supabase
       .from('profiles')
-      .select('id, email, full_name, role, team_id, active, teams(name)')
+      .select('id, email, full_name, role, team_id, active, is_demo, teams(name)')
       .eq('id', session.user.id)
       .maybeSingle()
   );
@@ -86,6 +140,7 @@ export async function myProfile() {
     );
   }
   if (!row.active) throw new Error('This account has been deactivated. Contact an admin.');
+  if (row.is_demo) enableDemo();
 
   return row;
 }
@@ -195,13 +250,19 @@ export async function listAgents() {
   return unwrap(
     await supabase
       .from('profiles')
-      .select('id, email, full_name, role, team_id, active, created_at, teams(name)')
+      .select('id, email, full_name, role, team_id, active, is_demo, created_at, teams(name)')
       .order('full_name')
-  );
+  ).map(p => (p.is_demo ? { ...p, role: 'demo' } : p));
 }
 
 export async function updateAgent(id, patch) {
   await requireSession();
+  // "demo" is stored as a dialer with is_demo set (migration 049).
+  if ('role' in patch) {
+    patch = patch.role === 'demo'
+      ? { ...patch, role: 'dialer', is_demo: true }
+      : { ...patch, is_demo: false };
+  }
   return unwrap(
     await supabase.from('profiles').update(patch).eq('id', id).select().single()
   );
