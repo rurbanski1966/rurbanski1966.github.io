@@ -7,8 +7,8 @@
 // there; Stripe sends the person back here, and the payment shows up once
 // Stripe's webhook has recorded it (normally a few seconds).
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=79';
-import { esc, toast, fmtMoneyExact, fmtDate, empty, spinner, agencyColor } from './ui.js?v=79';
+import * as db from './db.js?v=80';
+import { esc, toast, fmtMoneyExact, fmtDate, empty, spinner, agencyColor } from './ui.js?v=80';
 
 // Stripe's smallest card charge in USD.
 const MIN_PAYMENT = 0.5;
@@ -77,7 +77,7 @@ async function draw(main, ctx) {
     <h2>Payment history</h2>
     ${payments.length === 0 ? empty('No payments yet.') : `
       <div class="tablewrap"><table>
-        <thead><tr><th>Date</th><th>Agency</th><th>Type</th><th>By</th><th class="num">Amount</th></tr></thead>
+        <thead><tr><th>Date</th><th>Agency</th><th>Type</th><th>By</th><th class="num">Amount</th><th class="num">Sales tax</th><th class="num">Total charged</th></tr></thead>
         <tbody>
           ${payments.map(p => `
             <tr>
@@ -86,6 +86,8 @@ async function draw(main, ctx) {
               <td>${p.kind === 'write_off' ? 'Paid' : 'Card payment'}</td>
               <td>${esc(p.payer?.full_name || p.paid_by_email || '—')}</td>
               <td class="num">${esc(fmtMoneyExact(p.amount_usd))}</td>
+              <td class="num">${p.kind === 'write_off' ? '—' : esc(fmtMoneyExact(p.tax_usd ?? 0))}</td>
+              <td class="num">${esc(fmtMoneyExact(Number(p.amount_usd) + Number(p.tax_usd ?? 0)))}</td>
             </tr>`).join('')}
         </tbody>
       </table></div>`}`;
@@ -100,7 +102,8 @@ function balanceCardHtml(b, isMine, isAdmin) {
          <p class="muted bill-note">EWSS’s AI usage is already paid through the Claude API bill.</p>`
       : `<p class="muted bill-note">Covered by EWSS. An admin clears this balance.</p>`;
   } else if (balance >= MIN_PAYMENT && isMine) {
-    action = `<button class="btn btn--primary bill-pay" type="button" data-pay="${esc(b.team_id)}">Pay ${esc(fmtMoneyExact(balance))}</button>`;
+    action = `<button class="btn btn--primary bill-pay" type="button" data-pay="${esc(b.team_id)}">Pay ${esc(fmtMoneyExact(balance))} + tax</button>
+              <p class="muted bill-note">Sales tax is added at checkout, based on your billing address.</p>`;
   } else if (balance >= MIN_PAYMENT) {
     action = `<p class="muted bill-note">Waiting on ${esc(b.team_name)} to pay.</p>`;
   } else if (balance > 0) {

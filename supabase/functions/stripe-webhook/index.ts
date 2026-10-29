@@ -79,10 +79,16 @@ Deno.serve(async req => {
   // doesn't keep retrying something there's nothing to do with.
   if (!teamId || !s.amount_total) return json({ ok: true, ignored: 'no Lana team on this session' });
 
+  // amount_total includes sales tax (Stripe Tax). Only the pre-tax part pays
+  // down the balance; the tax is kept beside it (migration 050).
+  const taxCents = Number(s.total_details?.amount_tax ?? 0);
+  const balanceCents = Number(s.amount_subtotal ?? s.amount_total - taxCents);
+
   const service = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
   const { error } = await service.from('agency_payments').upsert({
     team_id: teamId,
-    amount_usd: s.amount_total / 100,
+    amount_usd: balanceCents / 100,
+    tax_usd: taxCents / 100,
     stripe_session_id: s.id,
     stripe_payment_intent: typeof s.payment_intent === 'string' ? s.payment_intent : s.payment_intent?.id ?? null,
     paid_by: s.metadata?.user_id || null,

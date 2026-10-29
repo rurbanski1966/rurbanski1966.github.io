@@ -13,6 +13,11 @@
 // Nothing is marked paid here. That happens only in stripe-webhook, after
 // Stripe reports the payment completed.
 //
+// Sales tax: Stripe Tax (automatic_tax) adds tax on top of the balance at
+// checkout, from the billing address Checkout collects. Stripe Tax must be
+// switched on in the Stripe Dashboard (origin address + where you're
+// registered), or Stripe refuses the session.
+//
 // Secrets: STRIPE_SECRET_KEY (sk_test_… or sk_live_…). Optional APP_URL,
 // the address Stripe sends people back to (default the live site).
 // ---------------------------------------------------------------------------
@@ -87,6 +92,10 @@ Deno.serve(async req => {
     'line_items[0][quantity]': '1',
     'line_items[0][price_data][currency]': 'usd',
     'line_items[0][price_data][unit_amount]': String(cents),
+    // The balance is before tax; tax is added on top.
+    'line_items[0][price_data][tax_behavior]': 'exclusive',
+    'automatic_tax[enabled]': 'true',
+    billing_address_collection: 'required',
     'line_items[0][price_data][product_data][name]': `${agency.team_name} — Lana AI call grading balance`,
     success_url: `${base}?checkout=success#/billing`,
     cancel_url: `${base}?checkout=cancelled#/billing`,

@@ -11,7 +11,7 @@
 // an unauthenticated empty array reach the UI.
 // ---------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=79';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=80';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true },
@@ -344,7 +344,7 @@ export async function agencyPayments({ limit = 50 } = {}) {
   await requireSession();
   const { data, error } = await supabase
     .from('agency_payments')
-    .select('id, team_id, amount_usd, kind, paid_by_email, paid_at, team:teams(name), payer:profiles(full_name)')
+    .select('id, team_id, amount_usd, tax_usd, kind, paid_by_email, paid_at, team:teams(name), payer:profiles(full_name)')
     .order('paid_at', { ascending: false })
     .limit(limit);
   if (error) { console.warn('agency_payments:', error.message); return []; }
