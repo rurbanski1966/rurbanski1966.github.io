@@ -8,8 +8,8 @@
 // the active flag, so a score from March stays interpretable after the rubric
 // changes in August — call_scores.rubric_version records which one graded it.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=81';
-import { esc, fmtDate, toast, empty, spinner } from './ui.js?v=81';
+import * as db from './db.js?v=82';
+import { esc, fmtDate, toast, empty, spinner } from './ui.js?v=82';
 
 /* --- prompt preview ------------------------------------------------------
    MUST match buildSystemPrompt() in supabase/functions/score-call/rubric.ts.

@@ -2,12 +2,12 @@
 // Agent-facing views: dashboard, my sales.
 // Every view exports render(main, ctx) and wires its own listeners.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=81';
-import { CATEGORIES } from './config.js?v=81';
+import * as db from './db.js?v=82';
+import { CATEGORIES } from './config.js?v=82';
 import {
   esc, fmtMoney, fmtMoneyExact, fmtNum, fmtPct, fmtDate,
   toast, statusChip, empty, spinner, selectField, legend, AGENCY_COLORS,
-} from './ui.js?v=81';
+} from './ui.js?v=82';
 
 const SERIES = {
   mapd:      'var(--series-1)',

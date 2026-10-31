@@ -5,13 +5,13 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=81';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, showsRubricScore } from './config.js?v=81';
+import * as db from './db.js?v=82';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, showsRubricScore } from './config.js?v=82';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
   toast, statTile, barRow, empty, spinner, selectField, loadPdfMake, pdfSafe, loadJSZip, downloadBlob,
   legend, agencyColor,
-} from './ui.js?v=81';
+} from './ui.js?v=82';
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -514,7 +514,7 @@ export async function reviews(main, ctx) {
     .map(name => teams.find(t => t.name === name))
     .filter(Boolean);
   const agencyOptions = [
-    { value: '', label: 'All agencies' },
+    { value: '', label: 'All' },
     ...agencyTeams.map(t => ({ value: t.id, label: t.name })),
   ];
   const labelTeams = new Map();
