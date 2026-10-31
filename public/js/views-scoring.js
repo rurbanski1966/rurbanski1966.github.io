@@ -5,13 +5,13 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=80';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, showsRubricScore } from './config.js?v=80';
+import * as db from './db.js?v=81';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, showsRubricScore } from './config.js?v=81';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
   toast, statTile, barRow, empty, spinner, selectField, loadPdfMake, pdfSafe, loadJSZip, downloadBlob,
   legend, agencyColor,
-} from './ui.js?v=80';
+} from './ui.js?v=81';
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -219,6 +219,8 @@ function matchNormalizedQuote(nq, normTurns) {
 }
 
 const REVIEWS_FILTER_KEY = 'lana-reviews-agent-filter';
+const REVIEWS_AGENCY_KEY = 'lana-reviews-agency-filter';
+const FILTER_AGENCIES = ['EWSS', 'SBA', 'SMC'];
 
 // The latest call_scores row for a recording, effective-score resolved —
 // the same "latest by created_at, override wins" logic call_scores_effective
@@ -313,6 +315,7 @@ export async function reviews(main, ctx) {
 
   const people = isAdmin ? await db.listAgents() : [];
   const rememberedNames = isAdmin ? await db.recordingAgentNames() : [];
+  const labelAgencies = isAdmin ? await db.recordingLabelAgencies() : [];
   const scripts = await db.listScripts({ activeOnly: true });
   const teams = await db.listTeams();
 
@@ -504,14 +507,30 @@ export async function reviews(main, ctx) {
   const list = document.getElementById('list');
 
   // Every recording for one person, real account or label — the "folder" an
-  // admin opens to see everything scored for that name so far.
-  const filterOptions = isAdmin
-    ? [
-        { value: '', label: 'All calls' },
-        ...activePeople.map(p => ({ value: `id:${p.id}`, label: p.full_name || p.email })),
-        ...rememberedNames.map(n => ({ value: `name:${n}`, label: n })),
-      ]
-    : [];
+  // admin opens to see everything scored for that name so far. With an
+  // agency picked, only that agency's agents: accounts on its team, and
+  // typed-in names with calls assigned to it.
+  const agencyTeams = FILTER_AGENCIES
+    .map(name => teams.find(t => t.name === name))
+    .filter(Boolean);
+  const agencyOptions = [
+    { value: '', label: 'All agencies' },
+    ...agencyTeams.map(t => ({ value: t.id, label: t.name })),
+  ];
+  const labelTeams = new Map();
+  for (const l of labelAgencies ?? []) {
+    if (!labelTeams.has(l.agent_name)) labelTeams.set(l.agent_name, new Set());
+    labelTeams.get(l.agent_name).add(l.team_id);
+  }
+  const agentOptionsFor = teamId => [
+    { value: '', label: 'All calls' },
+    ...activePeople
+      .filter(p => !teamId || p.team_id === teamId)
+      .map(p => ({ value: `id:${p.id}`, label: p.full_name || p.email })),
+    ...rememberedNames
+      .filter(n => !teamId || labelAgencies === null || labelTeams.get(n)?.has(teamId))
+      .map(n => ({ value: `name:${n}`, label: n })),
+  ];
 
   if (isAdmin) {
     // Persisted per tab (not per page load) so opening a call and hitting
@@ -520,13 +539,32 @@ export async function reviews(main, ctx) {
     // to carry across that. Falls back to "All calls" if the remembered
     // value no longer matches anyone in today's list (e.g. the only label
     // under that name got renamed or deleted).
+    const storedAgency = sessionStorage.getItem(REVIEWS_AGENCY_KEY) || '';
+    const initialAgency = agencyOptions.some(o => o.value === storedAgency) ? storedAgency : '';
+    const filterOptions = agentOptionsFor(initialAgency);
     const storedFilter = sessionStorage.getItem(REVIEWS_FILTER_KEY) || '';
     const initialFilter = filterOptions.some(o => o.value === storedFilter) ? storedFilter : '';
 
     document.querySelector('#list').insertAdjacentHTML('beforebegin', `
-      <div class="filters">${selectField('agent-filter', 'Agent', filterOptions, initialFilter)}</div>`);
+      <div class="filters">
+        ${selectField('agent-filter', 'Agent', filterOptions, initialFilter)}
+        ${selectField('agency-filter', 'Agency', agencyOptions, initialAgency)}
+      </div>`);
     document.getElementById('agent-filter').addEventListener('change', e => {
       sessionStorage.setItem(REVIEWS_FILTER_KEY, e.target.value);
+      draw();
+    });
+    // Picking an agency narrows the Agent list to its agents. The chosen
+    // agent stays if they're in the new list, else it goes back to All calls.
+    document.getElementById('agency-filter').addEventListener('change', e => {
+      const teamId = e.target.value;
+      sessionStorage.setItem(REVIEWS_AGENCY_KEY, teamId);
+      const agentSel = document.getElementById('agent-filter');
+      const keep = agentSel.value;
+      const opts = agentOptionsFor(teamId);
+      agentSel.innerHTML = opts.map(o => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
+      agentSel.value = opts.some(o => o.value === keep) ? keep : '';
+      sessionStorage.setItem(REVIEWS_FILTER_KEY, agentSel.value);
       draw();
     });
   }
@@ -539,15 +577,19 @@ export async function reviews(main, ctx) {
     clearTimeout(pollTimer);
     if (!quiet) list.innerHTML = spinner();
     const filter = isAdmin ? document.getElementById('agent-filter').value : '';
+    const agencyId = isAdmin ? document.getElementById('agency-filter').value : '';
     const [kind, value] = filter.split(/:(.*)/s);
     const rows = await db.listRecordings({
-      limit: filter ? 500 : 100,
+      limit: filter || agencyId ? 500 : 100,
       agentId: kind === 'id' ? value : undefined,
       agentName: kind === 'name' ? value : undefined,
+      agency: agencyId
+        ? { teamId: agencyId, agentIds: people.filter(p => p.team_id === agencyId).map(p => p.id) }
+        : undefined,
     });
 
     if (rows.length === 0) {
-      list.innerHTML = empty('No calls yet.');
+      list.innerHTML = empty(filter || agencyId ? 'No calls match these filters.' : 'No calls yet.');
       return;
     }
 

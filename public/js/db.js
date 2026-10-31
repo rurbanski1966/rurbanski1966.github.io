@@ -11,7 +11,7 @@
 // an unauthenticated empty array reach the UI.
 // ---------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=80';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=81';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true },
@@ -416,7 +416,10 @@ export function costMarkup(rec, at = new Date()) {
   return Number(current?.markup ?? 1);
 }
 
-export async function listRecordings({ agentId, agentName, status, limit = 100 } = {}) {
+// agency: { teamId, agentIds } — calls whose Agency Assigned is that team,
+// or that have none and whose agent is on it (agentIds: the team's
+// accounts). Same rule as cost_category in ai_cost_events.
+export async function listRecordings({ agentId, agentName, status, agency, limit = 100 } = {}) {
   await requireSession();
   let q = supabase
     .from('call_recordings')
@@ -428,11 +431,26 @@ export async function listRecordings({ agentId, agentName, status, limit = 100 }
   if (agentId) q = q.eq('agent_id', agentId);
   if (agentName) q = q.eq('agent_name', agentName);
   if (status) q = q.eq('status', status);
+  if (agency) {
+    q = agency.agentIds.length
+      ? q.or(`team_id.eq.${agency.teamId},and(team_id.is.null,agent_id.in.(${agency.agentIds.join(',')}))`)
+      : q.eq('team_id', agency.teamId);
+  }
   return unwrap(await q);
 }
 
 // Every free-text name ever typed for a label-only call, for the "remembered
 // names" dropdown on the upload form and the agent filter on the call list.
+// Typed-in agent names (no login) with the agencies their calls were
+// assigned to (migration 053). Before 053 has run, null: the Agent dropdown
+// then keeps every typed-in name under any agency.
+export async function recordingLabelAgencies() {
+  await requireSession();
+  const { data, error } = await supabase.rpc('recording_label_agencies');
+  if (error) { console.warn('recording_label_agencies:', error.message); return null; }
+  return data ?? [];
+}
+
 export async function recordingAgentNames() {
   await requireSession();
   return (unwrap(await supabase.rpc('recording_agent_names')) ?? []).map(r => r.agent_name);
