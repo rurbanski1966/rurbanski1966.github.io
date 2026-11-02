@@ -404,7 +404,8 @@ const RECORDING_COLS =
 // Assigned, else its agent's own team, in effect at `at` (when the cost was
 // incurred; now for a grade that just finished). Same rule as
 // ai_cost_events / cost_markup_at() (migration 047): SBA 1.10 then 1.11 from 2026-10-30, SMC
-// 1.025 from 2026-10-26, 1.03 from 2026-10-30, 1.035 from 2026-10-31, everyone else 1.
+// 1.025 from 2026-10-26, 1.03 from 2026-10-30, 1.035 from 2026-10-31, 1.045 from 2026-11-02,
+// everyone else 1.
 export function costMarkup(rec, at = new Date()) {
   const team = rec?.team ?? rec?.agent?.team;
   if (!team) return 1;
