@@ -7,11 +7,15 @@
 // there; Stripe sends the person back here, and the payment shows up once
 // Stripe's webhook has recorded it (normally a few seconds).
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=82';
-import { esc, toast, fmtMoneyExact, fmtDate, empty, spinner, agencyColor } from './ui.js?v=82';
+import * as db from './db.js?v=83';
+import { esc, toast, fmtMoneyExact, fmtDate, empty, spinner, agencyColor } from './ui.js?v=83';
 
 // Stripe's smallest card charge in USD.
 const MIN_PAYMENT = 0.5;
+
+// Agencies whose balance can be charged automatically each month
+// (migration 058). An admin saves the card.
+const AUTOPAY_AGENCIES = ['SBA', 'SMC'];
 
 // EWSS owns the platform and already pays the AI bill directly, so its
 // balance is never paid by card: an admin zeroes it out instead
@@ -31,6 +35,12 @@ export async function billing(main, ctx) {
     if (checkout === 'success') toast('Payment received. Thank you!', 'ok');
     else toast('Payment cancelled. Nothing was charged.', 'error');
   }
+  const autopay = new URLSearchParams(location.search).get('autopay');
+  if (autopay) {
+    history.replaceState(null, '', location.pathname + location.hash);
+    if (autopay === 'success') toast('Card saved. Autopay is on.', 'ok');
+    else toast('Card setup cancelled. Nothing was saved.', 'error');
+  }
 
   const isAdmin = ctx.profile.role === 'admin';
   main.innerHTML = `
@@ -45,7 +55,7 @@ export async function billing(main, ctx) {
 
   // The webhook usually lands within a second or two of Stripe redirecting
   // back; look again shortly so the new payment appears without a refresh.
-  if (checkout === 'success') setTimeout(() => draw(main, ctx), 4000);
+  if (checkout === 'success' || autopay === 'success') setTimeout(() => draw(main, ctx), 4000);
 }
 
 async function draw(main, ctx) {
@@ -53,7 +63,7 @@ async function draw(main, ctx) {
   const historyHost = main.querySelector('#bill-history');
   if (!cardsHost) return; // navigated away
 
-  const [balances, payments] = await Promise.all([db.agencyBalances(), db.agencyPayments()]);
+  const [balances, payments, autopay] = await Promise.all([db.agencyBalances(), db.agencyPayments(), db.agencyAutopay()]);
 
   if (balances === null) {
     cardsHost.innerHTML = `<div class="card">${empty('Billing isn’t set up yet. An admin needs to run migration 046.')}</div>`;
@@ -68,8 +78,15 @@ async function draw(main, ctx) {
 
   const myTeam = ctx.profile.team_id;
   const isAdmin = ctx.profile.role === 'admin';
-  cardsHost.innerHTML = `<div class="agency-grid">${balances.map(b => balanceCardHtml(b, b.team_id === myTeam, isAdmin)).join('')}</div>`;
+  const autopayOf = teamId => autopay && {
+    card: autopay.cards.find(c => c.team_id === teamId),
+    // Newest first, so this is the latest month billed.
+    month: autopay.months.find(m => m.team_id === teamId),
+  };
+  cardsHost.innerHTML = `<div class="agency-grid">${balances.map(b => balanceCardHtml(b, b.team_id === myTeam, isAdmin, autopayOf(b.team_id))).join('')}</div>`;
   cardsHost.querySelectorAll('[data-pay]').forEach(btn => btn.addEventListener('click', () => pay(btn)));
+  cardsHost.querySelectorAll('[data-autopay-setup]').forEach(btn => btn.addEventListener('click', () => setupAutopay(btn)));
+  cardsHost.querySelectorAll('[data-autopay-off]').forEach(btn => btn.addEventListener('click', () => autopayOff(btn, main, ctx)));
   cardsHost.querySelectorAll('[data-zero]').forEach(btn => btn.addEventListener('click', () => zeroOut(btn, main, ctx)));
 
   historyHost.hidden = false;
@@ -83,8 +100,8 @@ async function draw(main, ctx) {
             <tr>
               <td>${esc(fmtDate(localDay(p.paid_at)))}</td>
               <td><span class="legend__swatch legend__swatch--inline" style="background:${agencyColor(p.team?.name)}"></span>${esc(p.team?.name ?? '—')}</td>
-              <td>${p.kind === 'write_off' ? 'Paid' : 'Card payment'}</td>
-              <td>${esc(p.payer?.full_name || p.paid_by_email || '—')}</td>
+              <td>${p.kind === 'write_off' ? 'Paid' : p.kind === 'autopay' ? 'Autopay' : 'Card payment'}</td>
+              <td>${esc(p.payer?.full_name || p.paid_by_email || (p.kind === 'autopay' ? 'Card on file' : '—'))}</td>
               <td class="num">${esc(fmtMoneyExact(p.amount_usd))}</td>
               <td class="num">${p.kind === 'write_off' ? '—' : esc(fmtMoneyExact(p.tax_usd ?? 0))}</td>
               <td class="num">${esc(fmtMoneyExact(Number(p.amount_usd) + Number(p.tax_usd ?? 0)))}</td>
@@ -93,10 +110,13 @@ async function draw(main, ctx) {
       </table></div>`}`;
 }
 
-function balanceCardHtml(b, isMine, isAdmin) {
+function balanceCardHtml(b, isMine, isAdmin, auto) {
   const balance = Number(b.balance_usd);
+  const inProgress = auto?.month && ['creating', 'open'].includes(auto.month.status);
   let action;
-  if (b.team_name === OWNER_AGENCY && balance > 0) {
+  if (inProgress) {
+    action = `<p class="muted bill-note">Autopay charge of ${esc(fmtMoneyExact(auto.month.amount_usd))} + tax for ${esc(monthLabel(auto.month.period))} is in progress.${isAdmin && auto.month.error ? ` ${esc(auto.month.error)}` : ''}</p>`;
+  } else if (b.team_name === OWNER_AGENCY && balance > 0) {
     action = isAdmin
       ? `<button class="btn bill-pay" type="button" data-zero="${esc(b.team_id)}" data-amount="${esc(fmtMoneyExact(balance))}">Zero out balance</button>
          <p class="muted bill-note">EWSS’s AI usage is already paid through the Claude API bill.</p>`
@@ -126,7 +146,70 @@ function balanceCardHtml(b, isMine, isAdmin) {
         <div><dt>Last payment</dt><dd>${b.last_paid_at ? esc(fmtDate(localDay(b.last_paid_at))) : '—'}</dd></div>
       </dl>
       ${action}
+      ${autopayHtml(b, isAdmin, auto)}
     </section>`;
+}
+
+const monthLabel = period => {
+  const [y, m] = period.split('-').map(Number);
+  return new Date(y, m - 1, 15).toLocaleString('en-US', { month: 'long', year: 'numeric' });
+};
+
+// The autopay line on SBA's and SMC's cards. Left out entirely when
+// migration 058 hasn't been run (auto is null).
+function autopayHtml(b, isAdmin, auto) {
+  if (!auto || !AUTOPAY_AGENCIES.includes(b.team_name)) return '';
+  const card = auto.card;
+  const on = card?.enabled && card.card_label;
+  const failed = isAdmin && auto.month?.status === 'failed'
+    ? `<p class="bill-note"><span class="chip chip--critical"><span aria-hidden="true">!</span>Autopay failed for ${esc(monthLabel(auto.month.period))}</span> <span class="muted">${esc(auto.month.error ?? '')}</span></p>`
+    : '';
+  if (!isAdmin) {
+    return on
+      ? `<p class="muted bill-note">Autopay is on: ${esc(card.card_label)} is charged on the last day of each month.</p>`
+      : '';
+  }
+  return `
+    <div class="bill-autopay">
+      ${on
+        ? `<p class="bill-note"><span class="chip chip--good"><span aria-hidden="true">✓</span>Autopay on</span> <span class="muted">${esc(card.card_label)} · charged the last day of each month</span></p>
+           <div class="bill-autopay__actions">
+             <button class="btn btn--ghost btn--sm" type="button" data-autopay-setup="${esc(b.team_id)}">Change card</button>
+             <button class="btn btn--ghost btn--sm" type="button" data-autopay-off="${esc(b.team_id)}" data-name="${esc(b.team_name)}">Turn off autopay</button>
+           </div>`
+        : `<button class="btn btn--ghost btn--sm" type="button" data-autopay-setup="${esc(b.team_id)}">${card?.card_label ? 'Turn autopay back on' : 'Set up autopay'}</button>
+           <p class="muted bill-note">Saves ${esc(b.team_name)}’s card and charges its balance + tax on the last day of each month.</p>`}
+      ${failed}
+    </div>`;
+}
+
+async function setupAutopay(btn) {
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Opening secure card setup…';
+  try {
+    const { url } = await db.setupAutopay(btn.dataset.autopaySetup);
+    location.href = url;
+  } catch (err) {
+    toast(err.message, 'error');
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
+async function autopayOff(btn, main, ctx) {
+  if (!confirm(`Turn off autopay for ${btn.dataset.name}?
+
+The card stays saved at Stripe, and the balance can still be paid with the Pay button.`)) return;
+  btn.disabled = true;
+  try {
+    await db.disableAutopay(btn.dataset.autopayOff);
+    toast(`Autopay is off for ${btn.dataset.name}.`, 'ok');
+    await draw(main, ctx);
+  } catch (err) {
+    toast(err.message, 'error');
+    btn.disabled = false;
+  }
 }
 
 async function zeroOut(btn, main, ctx) {

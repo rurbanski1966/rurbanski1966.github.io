@@ -11,7 +11,7 @@
 // an unauthenticated empty array reach the UI.
 // ---------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=82';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=83';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true },
@@ -357,6 +357,27 @@ export async function zeroOutBalance(teamId) {
   await requireSession();
   return unwrap(await supabase.rpc('zero_out_agency_balance', { p_team_id: teamId }));
 }
+
+// Autopay (migration 058): each agency's card on file, and the months billed.
+// null when the migration hasn't been run, so the page can leave autopay out.
+export async function agencyAutopay() {
+  await requireSession();
+  const [cards, months] = await Promise.all([
+    supabase.from('agency_autopay').select('team_id, enabled, card_label, enabled_since'),
+    supabase.from('autopay_invoices')
+      .select('team_id, period, amount_usd, status, error, created_at')
+      .order('created_at', { ascending: false }).limit(50),
+  ]);
+  if (cards.error || months.error) {
+    console.warn('autopay:', (cards.error ?? months.error).message);
+    return null;
+  }
+  return { cards: cards.data ?? [], months: months.data ?? [] };
+}
+
+// Admins only: a Stripe page to save an agency's card, or autopay off.
+export const setupAutopay = teamId => invokeFunction('autopay-setup', { team_id: teamId, action: 'setup' });
+export const disableAutopay = teamId => invokeFunction('autopay-setup', { team_id: teamId, action: 'disable' });
 
 /* --- analytics ------------------------------------------------------------ */
 export async function analyticsAgents() {

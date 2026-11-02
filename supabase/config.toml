@@ -10,3 +10,7 @@ verify_jwt = false
 # Stripe has no Supabase login; the function checks the Stripe-Signature header.
 [functions.stripe-webhook]
 verify_jwt = false
+
+# pg_cron has no Supabase login; the function checks its own x-autopay-token.
+[functions.autopay-run]
+verify_jwt = false

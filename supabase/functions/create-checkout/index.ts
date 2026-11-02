@@ -86,6 +86,15 @@ Deno.serve(async req => {
     return json({ error: cents <= 0 ? `${agency.team_name} has nothing to pay.` : 'Balances under $0.50 can’t be paid by card.' }, 400);
   }
 
+  // An autopay invoice still being charged (migration 058) already covers
+  // this balance; paying it here as well would charge the agency twice.
+  const { data: pendingAutopay } = await userClient
+    .from('autopay_invoices').select('amount_usd')
+    .eq('team_id', agency.team_id).in('status', ['creating', 'open']).limit(1);
+  if (pendingAutopay?.length) {
+    return json({ error: `An autopay charge of $${Number(pendingAutopay[0].amount_usd).toFixed(2)} for ${agency.team_name} is already in progress.` }, 409);
+  }
+
   const base = returnBase(req);
   const form = new URLSearchParams({
     mode: 'payment',

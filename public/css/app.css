@@ -450,6 +450,9 @@ code {
 /* Billing: the agency card's action row (Pay button or status). */
 .bill-pay { width: 100%; margin-top: 14px; }
 .bill-note { margin: 12px 0 0; font-size: 12px; }
+.bill-autopay { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.bill-autopay .bill-note:first-child { margin-top: 0; }
+.bill-autopay__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .agency-card__flag { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 0; font-size: 12px; }
 .dash-note { font-size: 12px; margin: 0 0 18px; }
 
