@@ -103,13 +103,21 @@ Deno.serve(async req => {
   }
   if (action !== 'setup') return json({ error: `Unknown action "${action}"` }, 400);
 
+  // Billing contact (migration 059): who Stripe sends receipts and declined-
+  // card notices to.
+  const contact: Record<string, string> = { name: existing?.billing_name || `${team.name} (Lana)` };
+  if (existing?.billing_email) contact.email = existing.billing_email;
+
   try {
     let customerId = existing?.stripe_customer_id as string | undefined;
-    if (!customerId) {
+    if (customerId) {
+      await stripe(stripeKey, `customers/${customerId}`, contact);
+    } else {
       const customer = await stripe(stripeKey, 'customers', {
-        name: `${team.name} (Lana)`,
+        ...contact,
         'metadata[team_id]': team.id,
-      }, `lana-customer-${team.id}`);
+        'metadata[lana_account]': team.name,
+      }, `lana-customer-${team.id}-v2`);
       customerId = customer.id as string;
       const { error } = await service.from('agency_autopay').upsert({
         team_id: team.id,
