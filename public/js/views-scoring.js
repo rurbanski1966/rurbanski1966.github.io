@@ -5,13 +5,13 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=83';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, showsRubricScore } from './config.js?v=83';
+import * as db from './db.js?v=84';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, LEAD_SOURCES, showsRubricScore } from './config.js?v=84';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
   toast, statTile, barRow, empty, spinner, selectField, loadPdfMake, pdfSafe, loadJSZip, downloadBlob,
   legend, agencyColor,
-} from './ui.js?v=83';
+} from './ui.js?v=84';
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -376,6 +376,14 @@ export async function reviews(main, ctx) {
       </label>
 
       <label class="field">
+        <span>Lead Source</span>
+        <select id="lead_source">
+          <option value="">— none —</option>
+          ${LEAD_SOURCES.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('')}
+        </select>
+      </label>
+
+      <label class="field">
         <span>Agency Assigned</span>
         <select id="team_id">
           <option value="">— none —</option>
@@ -485,6 +493,7 @@ export async function reviews(main, ctx) {
         script_id: val('script_id') || null,
         call_type: val('call_type') || null,
         team_id: val('team_id') || null,
+        lead_source: val('lead_source') || null,
         title: val('title'),
         call_on: val('call_on'),
         storage_path: storagePath,
@@ -612,7 +621,8 @@ export async function reviews(main, ctx) {
           return `
           <tr data-id="${esc(r.id)}">
             <td class="tnum">${esc(fmtDate(r.call_on))}</td>
-            <td>${esc(r.title || 'Untitled call')}${r.error_message
+            <td>${esc(r.title || 'Untitled call')}${r.lead_source
+              ? `<br><span class="muted">${esc(r.lead_source)}</span>` : ''}${r.error_message
               ? `<br><span class="muted">${esc(r.error_message.slice(0, 80))}</span>` : ''}</td>
             <td>${esc(r.agent?.full_name || r.agent_name || '—')}${r.team?.name ? `<br><span class="muted">${esc(r.team.name)}</span>` : ''}</td>
             <td class="num tnum">${listScoreCellHtml(r)}</td>
@@ -687,6 +697,13 @@ export async function reviews(main, ctx) {
           </select>
         </label>
         <label class="field">
+          <span>Lead Source</span>
+          <select id="ed-lead_source">
+            <option value="">— none —</option>
+            ${LEAD_SOURCES.map(s => `<option value="${esc(s)}"${s === row.lead_source ? ' selected' : ''}>${esc(s)}</option>`).join('')}
+          </select>
+        </label>
+        <label class="field">
           <span>Agency Assigned</span>
           <select id="ed-team_id">
             <option value="">— none —</option>
@@ -719,6 +736,7 @@ export async function reviews(main, ctx) {
         script_id: editCard.querySelector('#ed-script').value || null,
         call_type: editCard.querySelector('#ed-call_type').value || null,
         team_id: editCard.querySelector('#ed-team_id').value || null,
+        lead_source: editCard.querySelector('#ed-lead_source').value || null,
       };
 
       if (isAdmin) {
@@ -778,6 +796,7 @@ export async function reviewDetail(main, ctx, recordingId) {
             ${esc(fmtDate(rec.call_on))} · ${esc(rec.agent?.full_name || rec.agent_name || '—')}
             ${rec.call_type ? ` · ${esc(CALL_TYPES.find(t => t.value === rec.call_type)?.label || rec.call_type)}` : ''}
             ${rec.team?.name ? ` · Agency Assigned: ${esc(rec.team.name)}` : ''}
+            ${rec.lead_source ? ` · Lead Source: ${esc(rec.lead_source)}` : ''}
             ${rec.script?.name ? ` · Script: ${esc(rec.script.name)}` : ''} · ${statusChipFor(rec.status)}
           </div>
         </div>

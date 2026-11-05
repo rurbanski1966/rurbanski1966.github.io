@@ -11,7 +11,7 @@
 // an unauthenticated empty array reach the UI.
 // ---------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=83';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=84';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true },
@@ -411,7 +411,7 @@ export async function agentScoreRoster({ bucket, teamId } = {}) {
 // is embedded the same way, for the Medicare grade in the list's Score column.
 const RECORDING_COLS =
   'id, agent_id, agent_name, uploaded_by, title, call_on, duration_seconds, storage_path, ' +
-  'transcript_source, status, error_message, created_at, updated_at, script_id, call_type, team_id, ' +
+  'transcript_source, status, error_message, created_at, updated_at, script_id, call_type, team_id, lead_source, ' +
   'reviewer_approved, reviewer_approved_at, ' +
   'agent:profiles!call_recordings_agent_id_fkey(full_name, team:teams(name, cost_markup, markups:team_cost_markups(markup, effective_from))), script:scripts(name), ' +
   'team:teams(name, cost_markup, markups:team_cost_markups(markup, effective_from)), ' +
@@ -503,6 +503,7 @@ export async function createRecording(input) {
         script_id: input.script_id || null,
         call_type: input.call_type || null,
         team_id: input.team_id || null,
+        lead_source: input.lead_source || null,
         title: input.title || '',
         call_on: input.call_on,
         duration_seconds: input.duration_seconds ?? null,

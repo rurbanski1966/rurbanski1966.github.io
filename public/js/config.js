@@ -44,6 +44,20 @@ export const CALL_TYPES = [
   { value: 'medicare_ancillary', label: 'Medicare + Ancillary' },
 ];
 
+// Where the call's lead came from. Must match the check constraint in
+// migration 060.
+export const LEAD_SOURCES = [
+  'GFIII CPA',
+  'BTF MA CPA',
+  'BTF ANCILLARY CPA',
+  '321 CPA',
+  'ORBIX MA CPA',
+  'RAPID HIP',
+  'SPARK MA $135',
+  'Spark MA CPA',
+  'GET MEDICARE INSURANCES CPA',
+];
+
 // A Medicare-only call is graded by the Medicare scorecard alone, so its
 // coaching-rubric score (overall, By dimension, findings) is not shown. A
 // Medicare + Ancillary call shows both: the scorecard for the Medicare
