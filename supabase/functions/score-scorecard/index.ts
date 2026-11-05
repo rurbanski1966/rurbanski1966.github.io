@@ -139,6 +139,7 @@ const INSTRUCTIONS =
 - Use "na" only when the item cannot apply to this call at all: for example the application and enrollment items on a call where no enrollment was attempted, or the authorized-representative item when the beneficiary enrolled themselves. N/A items are left out of the score, so do not use it to avoid a hard call.
 - Items phrased as "did the agent avoid / refrain from ..." pass unless the transcript shows a violation. When one fails, the evidence is the violating line.
 - Base every verdict on what is in the transcript. If something required is simply absent, that is a fail, and the reason should say it was not found.
+- A transcript can hold more than one recording of the same call, joined by a line starting "--- Call dropped. Follow-up call": the call dropped and the agent picked it back up. Grade the recordings together as one call, in order. An item met in any recording is met, a disclaimer given in the first recording need not be repeated in the follow-up, and speaker numbers restart in each recording, so tell the agent from the beneficiary by what they say.
 
 ## Evidence
 

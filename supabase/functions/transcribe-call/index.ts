@@ -67,7 +67,30 @@ function classifyCaller(req: Request) {
   return { kind: 'user' as const, via: 'jwt' };
 }
 
-type Segment = { start: number; end: number; speaker: number; text: string };
+// part: which recording of the call the line is from (0 = the first), so the
+// player knows which file to seek. Absent on single-recording calls.
+type Segment = { start: number; end: number; speaker: number; text: string; part?: number };
+
+// The line between two recordings of one call (migration 061). It has no
+// "Name:" prefix, so the transcript view shows it as its own plain line, and
+// the graders' instructions say what it means.
+const partMarker = (i: number, n: number) =>
+  `--- Call dropped. Follow-up call (recording ${i + 1} of ${n}) continues the same call ---`;
+
+// Each recording transcribed on its own, then joined in call order. Line
+// timings stay relative to their own recording; `part` says which. If any
+// part came back without timings, the joined call has none either.
+function joinParts(parts: { text: string; segments: Segment[] | null }[]) {
+  if (parts.length === 1) return parts[0];
+  const n = parts.length;
+  const text = parts.map((p, i) => (i === 0 ? p.text : `${partMarker(i, n)}\n${p.text}`)).join('\n');
+  if (parts.some(p => !p.segments)) return { text, segments: null };
+  const segments = parts.flatMap((p, i) => [
+    ...(i === 0 ? [] : [{ start: 0, end: 0, speaker: -1, text: partMarker(i, n), part: i }]),
+    ...p.segments!.map(s => ({ ...s, part: i })),
+  ]);
+  return { text, segments };
+}
 
 async function transcribe(audioUrl: string): Promise<{ text: string; segments: Segment[] | null }> {
   const key = Deno.env.get('DEEPGRAM_API_KEY');
@@ -169,12 +192,15 @@ Deno.serve(async req => {
   const recordingId = (body.recording_id ?? record?.id) as string | undefined;
   if (!recordingId) return json({ error: 'recording_id is required' }, 400);
 
-  let rec: { id: string; storage_path: string | null; status: string; transcript: string | null } | null;
+  let rec: {
+    id: string; storage_path: string | null; extra_storage_paths: string[] | null;
+    status: string; transcript: string | null;
+  } | null;
 
   if (isWebhook) {
     const { data, error } = await serviceClient
       .from('call_recordings')
-      .select('id, storage_path, status, transcript')
+      .select('id, storage_path, extra_storage_paths, status, transcript')
       .eq('id', recordingId)
       .maybeSingle();
     if (error) return json({ error: error.message }, 400);
@@ -192,7 +218,7 @@ Deno.serve(async req => {
 
     const { data, error } = await userClient
       .from('call_recordings')
-      .select('id, storage_path, status, transcript')
+      .select('id, storage_path, extra_storage_paths, status, transcript')
       .eq('id', recordingId)
       .maybeSingle();
     if (error) return json({ error: error.message }, 400);
@@ -222,15 +248,24 @@ Deno.serve(async req => {
   try {
     // The bucket is private, so hand the provider a short-lived signed URL
     // rather than making the object public or streaming 100 MB through here.
-    const { data: signed, error: signError } = await serviceClient
-      .storage.from('call-recordings')
-      .createSignedUrl(rec.storage_path!, 3600);
+    // Every recording of the call (migration 061), transcribed side by side.
+    const paths = [rec.storage_path!, ...(rec.extra_storage_paths ?? [])];
+    const parts = await Promise.all(paths.map(async (path, i) => {
+      const { data: signed, error: signError } = await serviceClient
+        .storage.from('call-recordings')
+        .createSignedUrl(path, 3600);
+      if (signError || !signed?.signedUrl) {
+        throw new Error(signError?.message ?? 'Could not sign the audio URL.');
+      }
+      try {
+        return await transcribe(signed.signedUrl);
+      } catch (err) {
+        if (paths.length === 1) throw err;
+        throw new Error(`Recording ${i + 1} of ${paths.length}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }));
 
-    if (signError || !signed?.signedUrl) {
-      throw new Error(signError?.message ?? 'Could not sign the audio URL.');
-    }
-
-    const { text: transcript, segments } = await transcribe(signed.signedUrl);
+    const { text: transcript, segments } = joinParts(parts);
 
     await serviceClient
       .from('call_recordings')
@@ -243,7 +278,7 @@ Deno.serve(async req => {
       })
       .eq('id', rec.id);
 
-    return json({ ok: true, characters: transcript.length, via: isWebhook ? 'webhook' : 'ui' });
+    return json({ ok: true, characters: transcript.length, recordings: paths.length, via: isWebhook ? 'webhook' : 'ui' });
   } catch (err) {
     const messageText = err instanceof Error ? err.message : String(err);
 

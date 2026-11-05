@@ -221,6 +221,11 @@ export function validateRubric(r: Rubric): string[] {
   return problems;
 }
 
+const MULTI_RECORDING_NOTE =
+  'A transcript can hold more than one recording of the same call, joined by a line starting "--- Call dropped. Follow-up call": ' +
+  'the call dropped and the agent picked it back up. Score the recordings together as one call, in order. Something done in any ' +
+  'recording counts, and speaker numbers restart in each recording, so tell the agent from the prospect by what they say.';
+
 export function buildSystemPrompt(r: Rubric): string {
   const scaleLines = (r.scale ?? [])
     .map(b => `- ${b.min}-${b.max}  ${b.label}. ${b.description}`)
@@ -250,6 +255,9 @@ export function buildSystemPrompt(r: Rubric): string {
     'Finding codes:\n\n' + codeLines,
     r.severity_guidance,
     '## Evidence\n\n' + r.evidence_rules,
+    // Fixed, not part of the editable rubric: how transcribe-call joins a
+    // call's recordings (migration 061). Constant text, so the cache holds.
+    MULTI_RECORDING_NOTE,
     '## Output\n\n' + r.output_guidance,
   ]
     .map(s => (s ?? '').trim())

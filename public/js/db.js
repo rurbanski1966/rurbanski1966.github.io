@@ -11,7 +11,7 @@
 // an unauthenticated empty array reach the UI.
 // ---------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=84';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=85';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true },
@@ -411,7 +411,7 @@ export async function agentScoreRoster({ bucket, teamId } = {}) {
 // is embedded the same way, for the Medicare grade in the list's Score column.
 const RECORDING_COLS =
   'id, agent_id, agent_name, uploaded_by, title, call_on, duration_seconds, storage_path, ' +
-  'transcript_source, status, error_message, created_at, updated_at, script_id, call_type, team_id, lead_source, ' +
+  'transcript_source, status, error_message, created_at, updated_at, script_id, call_type, team_id, lead_source, extra_storage_paths, ' +
   'reviewer_approved, reviewer_approved_at, ' +
   'agent:profiles!call_recordings_agent_id_fkey(full_name, team:teams(name, cost_markup, markups:team_cost_markups(markup, effective_from))), script:scripts(name), ' +
   'team:teams(name, cost_markup, markups:team_cost_markups(markup, effective_from)), ' +
@@ -508,6 +508,7 @@ export async function createRecording(input) {
         call_on: input.call_on,
         duration_seconds: input.duration_seconds ?? null,
         storage_path: input.storage_path ?? null,
+        extra_storage_paths: input.extra_storage_paths ?? [],
         transcript: hasTranscript ? input.transcript.trim() : null,
         transcript_source: hasTranscript ? 'manual' : null,
         status: hasTranscript ? 'transcribed' : 'uploaded',
@@ -563,6 +564,22 @@ export async function setReviewerApproval(id, approved) {
       .select()
       .single()
   );
+}
+
+// The call dropped and was finished on another call: add that recording to
+// this one (migration 061). The transcript is cleared so the caller can
+// transcribe every recording again as one call.
+export async function addFollowUpRecording(rec, file) {
+  const path = await uploadAudio(file);
+  return updateRecording(rec.id, {
+    extra_storage_paths: [...(rec.extra_storage_paths ?? []), path],
+    transcript: null,
+    transcript_segments: null,
+    transcript_source: null,
+    status: 'uploaded',
+    error_message: null,
+    updated_at: new Date().toISOString(),
+  });
 }
 
 export async function deleteRecording(id) {

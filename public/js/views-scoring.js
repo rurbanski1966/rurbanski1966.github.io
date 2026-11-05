@@ -5,13 +5,13 @@
 // and asks an Edge Function to score — the Anthropic key never reaches the
 // client.
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=84';
-import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, LEAD_SOURCES, showsRubricScore } from './config.js?v=84';
+import * as db from './db.js?v=85';
+import { SCORE_DIMENSIONS, FINDING_CODES, FINDING_SEVERITIES, RECORDING_STATUSES, CALL_TYPES, LEAD_SOURCES, showsRubricScore } from './config.js?v=85';
 import {
   esc, fmtNum, fmtDate, fmtMoneyExact, today, range, RANGES,
   toast, statTile, barRow, empty, spinner, selectField, loadPdfMake, pdfSafe, loadJSZip, downloadBlob,
   legend, agencyColor,
-} from './ui.js?v=84';
+} from './ui.js?v=85';
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -126,9 +126,11 @@ function transcriptHtml(text, segments) {
   return `<div class="transcript">${turns.map((t, i) => {
     const idx = t.who ? speakers.indexOf(t.who) % 2 : 0;
     const start = timed ? segments[i].start : null;
+    // Which recording the line is in, on a call with follow-ups (migration 061).
+    const part = timed ? segments[i].part ?? 0 : 0;
     return `
       <div class="turn${t.who ? ` turn--s${idx}` : ' turn--plain'}${start != null ? ' turn--clickable' : ''}"
-           id="turn-${i}"${start != null ? ` data-start="${esc(start)}" tabindex="0" role="button" title="Play from here"` : ''}>
+           id="turn-${i}"${start != null ? ` data-start="${esc(start)}" data-part="${esc(part)}" tabindex="0" role="button" title="Play from here"` : ''}>
         <div class="turn__no">${i + 1}</div>
         ${t.who ? `<div class="turn__who">${esc(t.who)}</div>` : '<div class="turn__who"></div>'}
         <div class="turn__text">${esc(t.text)}</div>
@@ -408,10 +410,14 @@ export async function reviews(main, ctx) {
       <label class="field">
         <span>Audio file</span>
         <div id="audio-dropzone" class="dropzone" tabindex="0" role="button">
-          <input type="file" id="audio" accept="audio/*" style="display:none">
+          <input type="file" id="audio" accept="audio/*" multiple style="display:none">
           <span id="audio-dropzone-text">Drag and drop an audio file here, or click to browse</span>
         </div>
-        <span class="muted" style="font-size:12px">Optional. Up to 100 MB. Needed only if you want automatic transcription.</span>
+        <span class="muted" style="font-size:12px">
+          Optional. Up to 100 MB each. Needed only if you want automatic transcription.
+          If the call dropped and was finished on a follow-up call, add every recording: they're joined in
+          file-name order and graded as one call. You can also add a follow-up later from the call's page.
+        </span>
       </label>
 
       <label class="field">
@@ -429,8 +435,17 @@ export async function reviews(main, ctx) {
   const dropzoneText = newCard.querySelector('#audio-dropzone-text');
   const DROPZONE_DEFAULT = 'Drag and drop an audio file here, or click to browse';
 
+  // A dropped call and its follow-ups, in call order. File-name order is the
+  // best guess there is (dialers name recordings by time), and the box
+  // shows it so a wrong order is caught before saving.
+  const pickedFiles = () => [...audioInput.files]
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
   const syncDropzoneText = () => {
-    dropzoneText.textContent = audioInput.files[0]?.name || DROPZONE_DEFAULT;
+    const files = pickedFiles();
+    dropzoneText.textContent = files.length > 1
+      ? `${files.length} recordings of one call, joined in this order: ${files.map((f, i) => `${i + 1}. ${f.name}`).join('  ·  ')}`
+      : files[0]?.name || DROPZONE_DEFAULT;
   };
 
   dropzone.addEventListener('click', () => audioInput.click());
@@ -448,15 +463,15 @@ export async function reviews(main, ctx) {
     dropzone.classList.remove('dropzone--active');
   }));
   dropzone.addEventListener('drop', e => {
-    const file = e.dataTransfer.files[0];
-    if (!file) return;
-    if (!file.type.startsWith('audio/')) return toast('Drop an audio file.', 'error');
+    const files = [...e.dataTransfer.files];
+    if (!files.length) return;
+    if (files.some(f => !f.type.startsWith('audio/'))) return toast('Drop audio files only.', 'error');
     // A plain FileList can't be built directly — DataTransfer is the
     // standard way to hand a dropped file to a real <input type="file">
     // so the rest of the form (and its submit handler) sees it exactly
     // like a click-to-browse selection.
     const dt = new DataTransfer();
-    dt.items.add(file);
+    files.forEach(f => dt.items.add(f));
     audioInput.files = dt.files;
     syncDropzoneText();
   });
@@ -464,7 +479,8 @@ export async function reviews(main, ctx) {
   newCard.querySelector('#rec-form').addEventListener('submit', async e => {
     e.preventDefault();
     const val = id => newCard.querySelector('#' + id)?.value.trim() ?? '';
-    const file = newCard.querySelector('#audio').files[0];
+    const files = pickedFiles();
+    const file = files[0];
     const transcript = newCard.querySelector('#transcript').value;
 
     if (!file && !transcript.trim()) {
@@ -486,7 +502,11 @@ export async function reviews(main, ctx) {
     btn.textContent = file ? 'Uploading…' : 'Saving…';
 
     try {
-      const storagePath = file ? await db.uploadAudio(file) : null;
+      const paths = [];
+      for (const [i, f] of files.entries()) {
+        if (files.length > 1) btn.textContent = `Uploading ${i + 1} of ${files.length}…`;
+        paths.push(await db.uploadAudio(f));
+      }
       await db.createRecording({
         agent_id: agentId,
         agent_name: agentName,
@@ -496,7 +516,8 @@ export async function reviews(main, ctx) {
         lead_source: val('lead_source') || null,
         title: val('title'),
         call_on: val('call_on'),
-        storage_path: storagePath,
+        storage_path: paths[0] ?? null,
+        extra_storage_paths: paths.slice(1),
         transcript,
       });
       toast('Call added.', 'ok');
@@ -621,7 +642,8 @@ export async function reviews(main, ctx) {
           return `
           <tr data-id="${esc(r.id)}">
             <td class="tnum">${esc(fmtDate(r.call_on))}</td>
-            <td>${esc(r.title || 'Untitled call')}${r.lead_source
+            <td>${esc(r.title || 'Untitled call')}${r.extra_storage_paths?.length
+              ? `<br><span class="muted">${r.extra_storage_paths.length + 1} recordings</span>` : ''}${r.lead_source
               ? `<br><span class="muted">${esc(r.lead_source)}</span>` : ''}${r.error_message
               ? `<br><span class="muted">${esc(r.error_message.slice(0, 80))}</span>` : ''}</td>
             <td>${esc(r.agent?.full_name || r.agent_name || '—')}${r.team?.name ? `<br><span class="muted">${esc(r.team.name)}</span>` : ''}</td>
@@ -787,6 +809,10 @@ export async function reviewDetail(main, ctx, recordingId) {
     const score = showRubric && rec.status === 'scored' ? await db.scoreForRecording(rec.id) : null;
     const busy = rec.status === 'transcribing' || rec.status === 'scoring';
     const turns = parseTurns(rec.transcript);
+    // Every recording of the call, in order: the first, then any follow-ups
+    // after a dropped call (migration 061).
+    const audioParts = rec.storage_path ? [rec.storage_path, ...(rec.extra_storage_paths ?? [])] : [];
+    const multiPart = audioParts.length > 1;
 
     main.innerHTML = `
       <div class="page__head">
@@ -815,7 +841,13 @@ export async function reviewDetail(main, ctx, recordingId) {
           ${busy ? `<span class="muted">Working… reload in a moment</span>` : ''}
         </div>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
-          ${rec.storage_path ? `<button class="btn" id="play">Play audio</button>` : ''}
+          ${rec.storage_path ? `<button class="btn" id="play">${multiPart ? `Play audio (${audioParts.length} recordings)` : 'Play audio'}</button>` : ''}
+          ${rec.storage_path ? `
+            <button class="btn btn--ghost" id="add-part" type="button"${busy ? ' disabled' : ''}
+                    title="The call dropped and was finished on another call? Add that recording here and the call is transcribed and graded as one.">
+              Add follow-up recording
+            </button>
+            <input type="file" id="add-part-file" accept="audio/*" hidden>` : ''}
           ${rec.storage_path && !rec.transcript
             ? `<button class="btn" id="transcribe"${busy ? ' disabled' : ''}>Transcribe audio</button>` : ''}
           ${rec.transcript && showRubric
@@ -943,17 +975,19 @@ export async function reviewDetail(main, ctx, recordingId) {
           toast('No audio file on this call — downloaded the report alone.', 'ok');
         } else {
           btn.textContent = 'Bundling audio…';
-          const [audioBlob] = await Promise.all([
-            db.audioUrl(rec.storage_path).then(url => fetch(url)).then(res => {
+          const [audioBlobs] = await Promise.all([
+            Promise.all(audioParts.map(path => db.audioUrl(path).then(url => fetch(url)).then(res => {
               if (!res.ok) throw new Error(`Could not download the call recording (${res.status}).`);
               return res.blob();
-            }),
+            }))),
             loadJSZip(),
           ]);
-          const ext = (rec.storage_path.split('.').pop() || 'mp3').toLowerCase();
           const zip = new window.JSZip();
           zip.file(`${baseName}.pdf`, pdfBlob);
-          zip.file(`${baseName}.${ext}`, audioBlob);
+          audioParts.forEach((path, i) => {
+            const ext = (path.split('.').pop() || 'mp3').toLowerCase();
+            zip.file(`${baseName}${multiPart ? `-recording-${i + 1}` : ''}.${ext}`, audioBlobs[i]);
+          });
           const zipBlob = await zip.generateAsync({ type: 'blob' });
           downloadBlob(zipBlob, `${baseName}.zip`);
         }
@@ -1002,12 +1036,23 @@ export async function reviewDetail(main, ctx, recordingId) {
       }
     });
 
+    // One player per recording, labelled when there's more than one. Starting
+    // one pauses the others, so two recordings never play over each other.
+    async function loadPlayers() {
+      const urls = await Promise.all(audioParts.map(path => db.audioUrl(path)));
+      const host = document.getElementById('player');
+      host.innerHTML = urls.map((url, i) => `
+        ${multiPart ? `<div class="muted" style="font-size:12px;margin:${i ? 10 : 0}px 0 4px">
+          Recording ${i + 1} of ${urls.length}${i ? ' (follow-up)' : ''}</div>` : ''}
+        <audio controls id="rec-audio-${i}" src="${esc(url)}" style="width:100%"></audio>`).join('');
+      const players = [...host.querySelectorAll('audio')];
+      players.forEach(a => a.addEventListener('play', () => players.forEach(o => { if (o !== a) o.pause(); })));
+    }
+
     document.getElementById('play')?.addEventListener('click', async e => {
       e.target.disabled = true;
       try {
-        const url = await db.audioUrl(rec.storage_path);
-        document.getElementById('player').innerHTML =
-          `<audio controls id="rec-audio" src="${esc(url)}" style="width:100%"></audio>`;
+        await loadPlayers();
       } catch (err) {
         toast(err.message, 'error');
         e.target.disabled = false;
@@ -1016,21 +1061,18 @@ export async function reviewDetail(main, ctx, recordingId) {
 
     // Loads the player on demand — a transcript line or a coaching quote can
     // be clicked before "Play audio" ever was — then seeks once the audio
-    // actually has a duration to seek within.
-    async function ensureAudioAndSeek(startSeconds) {
+    // actually has a duration to seek within. part: which recording.
+    async function ensureAudioAndSeek(startSeconds, part = 0) {
       if (!rec.storage_path || !Number.isFinite(startSeconds)) return;
-      let audio = document.getElementById('rec-audio');
-      if (!audio) {
+      if (!document.getElementById('rec-audio-0')) {
         try {
-          const url = await db.audioUrl(rec.storage_path);
-          document.getElementById('player').innerHTML =
-            `<audio controls id="rec-audio" src="${esc(url)}" style="width:100%"></audio>`;
-          audio = document.getElementById('rec-audio');
+          await loadPlayers();
         } catch (err) {
           toast(err.message, 'error');
           return;
         }
       }
+      const audio = document.getElementById(`rec-audio-${part}`) ?? document.getElementById('rec-audio-0');
       const seek = () => { audio.currentTime = startSeconds; audio.play(); };
       if (audio.readyState >= 1) seek();
       else audio.addEventListener('loadedmetadata', seek, { once: true });
@@ -1039,7 +1081,7 @@ export async function reviewDetail(main, ctx, recordingId) {
     // Clicking a transcript line seeks the audio there directly.
     document.getElementById('transcript-view')?.addEventListener('click', e => {
       const turnEl = e.target.closest('.turn--clickable');
-      if (turnEl) ensureAudioAndSeek(Number(turnEl.dataset.start));
+      if (turnEl) ensureAudioAndSeek(Number(turnEl.dataset.start), Number(turnEl.dataset.part || 0));
     });
 
     // Clicking a coaching evidence quote scrolls to the transcript line it
@@ -1051,7 +1093,7 @@ export async function reviewDetail(main, ctx, recordingId) {
         turnEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
         turnEl.classList.add('turn--flash');
         setTimeout(() => turnEl.classList.remove('turn--flash'), 1500);
-        if (turnEl.dataset.start !== undefined) ensureAudioAndSeek(Number(turnEl.dataset.start));
+        if (turnEl.dataset.start !== undefined) ensureAudioAndSeek(Number(turnEl.dataset.start), Number(turnEl.dataset.part || 0));
       }
     };
     const onQuoteClick = e => {
@@ -1064,6 +1106,42 @@ export async function reviewDetail(main, ctx, recordingId) {
     document.getElementById('dimensions-area')?.addEventListener('click', onQuoteClick);
     document.getElementById('findings-area')?.addEventListener('click', onQuoteClick);
     document.getElementById('scorecard-area')?.addEventListener('click', onQuoteClick);
+
+    // A dropped call finished on a second call: add that recording, then
+    // transcribe every recording again as one call. A call that was already
+    // graded is regraded, so the grade covers the whole conversation. The
+    // rubric score redoes itself when the new transcript lands, as on upload.
+    document.getElementById('add-part')?.addEventListener('click', () => document.getElementById('add-part-file').click());
+    document.getElementById('add-part-file')?.addEventListener('change', async e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const btn = document.getElementById('add-part');
+      const n = audioParts.length + 1;
+      let hadGrade = false;
+      try { hadGrade = Boolean(await db.scorecardForRecording(rec.id)); } catch { /* no scorecard yet */ }
+      const warning = `Add "${file.name}" as recording ${n} of this call?\n\n` +
+        `The whole call (all ${n} recordings) is transcribed again as one conversation` +
+        (hadGrade ? ' and regraded. Any manual regrade on this call will need to be redone.' : '.');
+      if (!confirm(warning)) { e.target.value = ''; return; }
+
+      btn.disabled = true;
+      try {
+        btn.textContent = 'Uploading…';
+        await db.addFollowUpRecording(rec, file);
+        btn.textContent = `Transcribing ${n} recordings…`;
+        await db.transcribeCall(rec.id);
+        if (hadGrade) {
+          btn.textContent = 'Regrading…';
+          await db.gradeScorecard(rec.id);
+        }
+        toast(hadGrade
+          ? `Recording ${n} added. The call was transcribed and regraded as one.`
+          : `Recording ${n} added and the call transcribed as one.`, 'ok');
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+      draw();
+    });
 
     document.getElementById('transcribe')?.addEventListener('click', async e => {
       e.target.disabled = true;
