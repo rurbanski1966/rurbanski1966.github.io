@@ -7,8 +7,8 @@
 // there; Stripe sends the person back here, and the payment shows up once
 // Stripe's webhook has recorded it (normally a few seconds).
 // ---------------------------------------------------------------------------
-import * as db from './db.js?v=85';
-import { esc, toast, fmtMoneyExact, fmtDate, empty, spinner, agencyColor } from './ui.js?v=85';
+import * as db from './db.js?v=86';
+import { esc, toast, fmtMoneyExact, fmtDate, empty, spinner, agencyColor } from './ui.js?v=86';
 
 // Stripe's smallest card charge in USD.
 const MIN_PAYMENT = 0.5;
@@ -16,6 +16,12 @@ const MIN_PAYMENT = 0.5;
 // Agencies whose balance can be charged automatically each month
 // (migration 058). An admin saves the card.
 const AUTOPAY_AGENCIES = ['SBA', 'SMC'];
+// Stripe's customer portal (per Ryan 2026-11-06). The agency signs in with
+// the billing email on its Stripe customer and changes the card there;
+// stripe-webhook (customer.updated) brings the new card back into Lana.
+const STRIPE_PORTAL_URL = 'https://billing.stripe.com/p/login/bJe3cwbfggxXcFj3cK6Zy00';
+const portalLink = () =>
+  `<a class="btn btn--ghost btn--sm" href="${STRIPE_PORTAL_URL}" target="_blank" rel="noopener">Manage Autopay / Payment Method</a>`;
 
 // EWSS owns the platform and already pays the AI bill directly, so its
 // balance is never paid by card: an admin zeroes it out instead
@@ -166,7 +172,10 @@ function autopayHtml(b, isAdmin, auto) {
     : '';
   if (!isAdmin) {
     return on
-      ? `<p class="muted bill-note">Autopay is on: ${esc(card.card_label)} is charged on the last day of each month.</p>`
+      ? `<div class="bill-autopay">
+           <p class="muted bill-note">Autopay is on: ${esc(card.card_label)} is charged on the last day of each month.</p>
+           <div class="bill-autopay__actions">${portalLink()}</div>
+         </div>`
       : '';
   }
   return `
@@ -176,6 +185,7 @@ function autopayHtml(b, isAdmin, auto) {
            <div class="bill-autopay__actions">
              <button class="btn btn--ghost btn--sm" type="button" data-autopay-setup="${esc(b.team_id)}">Change card</button>
              <button class="btn btn--ghost btn--sm" type="button" data-autopay-off="${esc(b.team_id)}" data-name="${esc(b.team_name)}">Turn off autopay</button>
+             ${portalLink()}
            </div>`
         : `<button class="btn btn--ghost btn--sm" type="button" data-autopay-setup="${esc(b.team_id)}">${card?.card_label ? 'Turn autopay back on' : 'Set up autopay'}</button>
            <p class="muted bill-note">Saves ${esc(b.team_name)}’s card and charges its balance + tax on the last day of each month.</p>`}

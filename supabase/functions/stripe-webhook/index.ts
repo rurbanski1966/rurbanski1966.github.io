@@ -17,6 +17,7 @@
 //   invoice.paid                            — an autopay invoice was charged
 //   invoice.payment_failed                  — an autopay charge was declined
 //   invoice.voided, invoice.marked_uncollectible — Stripe gave up on one
+//   customer.updated                        — card changed in the customer portal
 // Stripe retries and can send an event twice; stripe_session_id and
 // stripe_invoice_id are unique, so a repeat is a no-op.
 // ---------------------------------------------------------------------------
@@ -77,6 +78,28 @@ async function handleCardSaved(service: SupabaseClient, s: Record<string, any>) 
     return json({ ok: true, autopay: 'card saved' });
   } catch (err) {
     // 500 so Stripe retries.
+    return json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+}
+
+// The agency changed its card in the Stripe customer portal. Keep Lana's
+// record of which card is on file (shown on the Billing page) in step.
+async function handleCustomerUpdated(service: SupabaseClient, event: Record<string, any>) {
+  const c = event.data?.object ?? {};
+  const teamId = c.metadata?.team_id;
+  const pmId = c.invoice_settings?.default_payment_method;
+  if (!teamId || typeof pmId !== 'string') return json({ ok: true, ignored: 'no Lana team or default card' });
+  try {
+    const pm = await stripeApi(`payment_methods/${pmId}`);
+    const brand = String(pm.card?.brand ?? 'card');
+    const { error } = await service.from('agency_autopay').update({
+      payment_method_id: pm.id,
+      card_label: `${brand.charAt(0).toUpperCase()}${brand.slice(1)} •••• ${pm.card?.last4 ?? '????'}`,
+      updated_at: new Date().toISOString(),
+    }).eq('team_id', teamId).eq('stripe_customer_id', c.id);
+    if (error) throw new Error(error.message);
+    return json({ ok: true, autopay: 'card updated' });
+  } catch (err) {
     return json({ error: err instanceof Error ? err.message : String(err) }, 500);
   }
 }
@@ -176,6 +199,7 @@ Deno.serve(async req => {
   const service = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
   if (typeof type === 'string' && type.startsWith('invoice.')) return handleInvoice(service, event);
+  if (type === 'customer.updated') return handleCustomerUpdated(service, event);
   if (type !== 'checkout.session.completed' && type !== 'checkout.session.async_payment_succeeded') {
     return json({ ok: true, ignored: type });
   }

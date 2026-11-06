@@ -127,7 +127,9 @@ Deno.serve(async req => {
       customer: row.stripe_customer_id,
       collection_method: 'charge_automatically',
       auto_advance: 'true',
-      default_payment_method: row.payment_method_id,
+      // No default_payment_method here: Stripe charges the customer's own
+      // default card, which is the one the agency last set, in Lana or in
+      // the Stripe customer portal.
       'automatic_tax[enabled]': 'true',
       pending_invoice_items_behavior: 'exclude',
       description: `${name} — Lana AI call grading, ${monthName(period)}`,
